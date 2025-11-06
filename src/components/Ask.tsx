@@ -322,7 +322,9 @@ const Ask: React.FC<AskProps> = ({
         messages: newHistory.map(msg => ({ role: msg.role as 'user' | 'assistant', content: msg.content })),
         provider: selectedProvider,
         model: isCustomSelectedModel ? customSelectedModel : selectedModel,
-        language: language
+        language: language,
+        deep_research: deepResearch,
+        max_iterations: 5
       };
 
       // Add tokens if available
@@ -586,7 +588,8 @@ const Ask: React.FC<AskProps> = ({
       // Create initial message
       const initialMessage: Message = {
         role: 'user',
-        content: deepResearch ? `[DEEP RESEARCH] ${question}` : question
+        // content: deepResearch ? `[DEEP RESEARCH] ${question}` : question
+        content: question
       };
 
       // Set initial conversation history
@@ -600,7 +603,9 @@ const Ask: React.FC<AskProps> = ({
         messages: newHistory.map(msg => ({ role: msg.role as 'user' | 'assistant', content: msg.content })),
         provider: selectedProvider,
         model: isCustomSelectedModel ? customSelectedModel : selectedModel,
-        language: language
+        language: language,
+        deep_research: deepResearch,
+        max_iterations: 5
       };
 
       // Add tokens if available

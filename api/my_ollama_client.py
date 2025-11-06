@@ -432,7 +432,7 @@ class MyOllamaClient(ModelClient):
     def call(self, api_kwargs: Dict = {}, model_type: ModelType = ModelType.UNDEFINED):
         if "model" not in api_kwargs:
             raise ValueError("model must be specified")
-        log.info(f"Modified Ollama Client api_kwargs: {api_kwargs}")
+        # log.info(f"Modified Ollama Client api_kwargs: {api_kwargs}")
         if not self.sync_client:
             self.init_sync_client()
         if self.sync_client is None:

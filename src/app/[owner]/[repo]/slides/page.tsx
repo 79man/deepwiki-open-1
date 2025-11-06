@@ -1,13 +1,26 @@
-'use client';
+"use client";
 
-import React, { useCallback, useState, useEffect, useRef, useMemo } from 'react';
-import { useParams, useSearchParams } from 'next/navigation';
-import Link from 'next/link';
-import { FaArrowLeft, FaSync, FaDownload, FaArrowRight, FaArrowUp, FaTimes } from 'react-icons/fa';
-import ThemeToggle from '@/components/theme-toggle';
-import { useLanguage } from '@/contexts/LanguageContext';
-import { RepoInfo } from '@/types/repoinfo';
-import getRepoUrl from '@/utils/getRepoUrl';
+import React, {
+  useCallback,
+  useState,
+  useEffect,
+  useRef,
+  useMemo,
+} from "react";
+import { useParams, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import {
+  FaArrowLeft,
+  FaSync,
+  FaDownload,
+  FaArrowRight,
+  FaArrowUp,
+  FaTimes,
+} from "react-icons/fa";
+import ThemeToggle from "@/components/theme-toggle";
+import { useLanguage } from "@/contexts/LanguageContext";
+import { RepoInfo } from "@/types/repoinfo";
+import getRepoUrl from "@/utils/getRepoUrl";
 
 // Helper function to add tokens and other parameters to request body
 const addTokensToRequestBody = (
@@ -15,13 +28,13 @@ const addTokensToRequestBody = (
   requestBody: Record<string, any>,
   token: string,
   repoType: string,
-  provider: string = '',
-  model: string = '',
+  provider: string = "",
+  model: string = "",
   isCustomModel: boolean = false,
-  customModel: string = '',
-  language: string = 'en',
+  customModel: string = "",
+  language: string = "en"
 ) => {
-  if (token !== '') {
+  if (token !== "") {
     requestBody.token = token;
   }
 
@@ -52,33 +65,40 @@ export default function SlidesPage() {
   const repo = params.repo as string;
 
   // Extract tokens from search params
-  const token = searchParams.get('token') || '';
-  const repoType = searchParams.get('type') || 'github';
-  const localPath = searchParams.get('local_path') ? decodeURIComponent(searchParams.get('local_path') || '') : undefined;
-  const repoUrl = searchParams.get('repo_url') ? decodeURIComponent(searchParams.get('repo_url') || '') : undefined;
-  const providerParam = searchParams.get('provider') || '';
-  const modelParam = searchParams.get('model') || '';
-  const isCustomModelParam = searchParams.get('is_custom_model') === 'true';
-  const customModelParam = searchParams.get('custom_model') || '';
-  const language = searchParams.get('language') || 'en';
+  const token = searchParams.get("token") || "";
+  const repoType = searchParams.get("type") || "github";
+  const localPath = searchParams.get("local_path")
+    ? decodeURIComponent(searchParams.get("local_path") || "")
+    : undefined;
+  const repoUrl = searchParams.get("repo_url")
+    ? decodeURIComponent(searchParams.get("repo_url") || "")
+    : undefined;
+  const providerParam = searchParams.get("provider") || "";
+  const modelParam = searchParams.get("model") || "";
+  const isCustomModelParam = searchParams.get("is_custom_model") === "true";
+  const customModelParam = searchParams.get("custom_model") || "";
+  const language = searchParams.get("language") || "en";
 
   // Import language context for translations
   const { messages } = useLanguage();
 
   // Initialize repo info with useMemo to prevent unnecessary re-renders
-  const repoInfo = useMemo<RepoInfo>(() => ({
-    owner,
-    repo,
-    type: repoType,
-    token: token || null,
-    localPath: localPath || null,
-    repoUrl: repoUrl || null
-  }), [owner, repo, repoType, token, localPath, repoUrl]);
+  const repoInfo = useMemo<RepoInfo>(
+    () => ({
+      owner,
+      repo,
+      type: repoType,
+      token: token || null,
+      localPath: localPath || null,
+      repoUrl: repoUrl || null,
+    }),
+    [owner, repo, repoType, token, localPath, repoUrl]
+  );
 
   // State variables
   const [isLoading, setIsLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState<string | undefined>(
-    messages.loading?.initializing || 'Initializing slides generation...'
+    messages.loading?.initializing || "Initializing slides generation..."
   );
   const [error, setError] = useState<string | null>(null);
   const [slides, setSlides] = useState<Slide[]>([]);
@@ -116,7 +136,8 @@ export default function SlidesPage() {
     generated_pages: Record<string, WikiPage>;
   }
 
-  const [cachedWikiContent, setCachedWikiContent] = useState<WikiCacheData | null>(null);
+  const [cachedWikiContent, setCachedWikiContent] =
+    useState<WikiCacheData | null>(null);
 
   // Function to fetch cached wiki content
   const fetchCachedWikiContent = useCallback(async () => {
@@ -131,21 +152,30 @@ export default function SlidesPage() {
 
       if (response.ok) {
         const cachedData = await response.json();
-        if (cachedData && cachedData.wiki_structure && cachedData.generated_pages &&
-            Object.keys(cachedData.generated_pages).length > 0) {
-          console.log('Successfully fetched cached wiki data for slides generation');
+        if (
+          cachedData &&
+          cachedData.wiki_structure &&
+          cachedData.generated_pages &&
+          Object.keys(cachedData.generated_pages).length > 0
+        ) {
+          console.log(
+            "Successfully fetched cached wiki data for slides generation"
+          );
           setCachedWikiContent(cachedData);
           return cachedData;
         } else {
-          console.log('No valid wiki data in server cache or cache is empty.');
+          console.log("No valid wiki data in server cache or cache is empty.");
           return null;
         }
       } else {
-        console.error('Error fetching wiki cache from server:', response.status);
+        console.error(
+          "Error fetching wiki cache from server:",
+          response.status
+        );
         return null;
       }
     } catch (error) {
-      console.error('Error loading from server cache:', error);
+      console.error("Error loading from server cache:", error);
       return null;
     }
   }, [repoInfo.owner, repoInfo.repo, repoInfo.type, language]);
@@ -159,7 +189,9 @@ export default function SlidesPage() {
     // Clear previous content
     setSlides([]);
     setCurrentSlideIndex(0);
-    setLoadingMessage(messages.loading?.generatingSlides || 'Generating slides...');
+    setLoadingMessage(
+      messages.loading?.generatingSlides || "Generating slides..."
+    );
 
     try {
       // Get repository URL
@@ -172,11 +204,13 @@ export default function SlidesPage() {
       }
 
       // We'll just pass the entire wiki data to the LLM without complex processing
-      let wikiContent = '';
+      let wikiContent = "";
 
       if (wikiData && wikiData.wiki_structure && wikiData.generated_pages) {
         // Add the wiki structure description
-        wikiContent += `## Project Overview\n${wikiData.wiki_structure.description || ''}\n\n`;
+        wikiContent += `## Project Overview\n${
+          wikiData.wiki_structure.description || ""
+        }\n\n`;
 
         // Add all wiki pages content
         const pages = wikiData.wiki_structure.pages || [];
@@ -187,10 +221,14 @@ export default function SlidesPage() {
         const maxContentLength = 30000; // Approximate limit to avoid token issues
 
         // First add high importance pages
-        const highImportancePages = pages.filter(page => page.importance === 'high');
+        const highImportancePages = pages.filter(
+          (page) => page.importance === "high"
+        );
         for (const page of highImportancePages) {
           if (generatedPages[page.id] && generatedPages[page.id].content) {
-            const content = `## ${page.title}\n${generatedPages[page.id].content}\n\n`;
+            const content = `## ${page.title}\n${
+              generatedPages[page.id].content
+            }\n\n`;
             wikiContent += content;
             totalContentLength += content.length;
 
@@ -202,16 +240,22 @@ export default function SlidesPage() {
         if (totalContentLength < maxContentLength) {
           for (const page of pages) {
             // Skip high importance pages we've already added
-            if (page.importance === 'high') continue;
+            if (page.importance === "high") continue;
 
             if (generatedPages[page.id] && generatedPages[page.id].content) {
-              const content = `## ${page.title}\n${generatedPages[page.id].content}\n\n`;
+              const content = `## ${page.title}\n${
+                generatedPages[page.id].content
+              }\n\n`;
 
               // Check if adding this content would exceed our limit
               if (totalContentLength + content.length > maxContentLength) {
                 // If it would exceed, just add a summary
-                const summaryMatch = generatedPages[page.id].content.match(/# .*?\n\n(.*?)(\n\n|$)/);
-                const summary = summaryMatch ? summaryMatch[1].trim() : 'No summary available';
+                const summaryMatch = generatedPages[page.id].content.match(
+                  /# .*?\n\n(.*?)(\n\n|$)/
+                );
+                const summary = summaryMatch
+                  ? summaryMatch[1].trim()
+                  : "No summary available";
                 const summaryContent = `## ${page.title}\n${summary}\n\n`;
 
                 wikiContent += summaryContent;
@@ -232,9 +276,10 @@ export default function SlidesPage() {
       const planRequestBody: Record<string, unknown> = {
         repo_url: repoUrl,
         type: repoInfo.type,
-        messages: [{
-          role: 'user',
-          content: `Create an engaging outline for a high-quality marketing slide presentation about the ${owner}/${repo} repository.
+        messages: [
+          {
+            role: "user",
+            content: `Create an engaging outline for a high-quality marketing slide presentation about the ${owner}/${repo} repository.
 
 Based on this wiki content:
 ${wikiContent}
@@ -253,20 +298,33 @@ For example, instead of generic titles like "Introduction" or "Features", use mo
 2. "Unlock Powerful Capabilities with Our Innovative Architecture"
 3. "How ${repo} Transforms Your Workflow"
 
-Give me the numbered list with brief descriptions for each slide. Be creative but professional.`
-        }]
+Give me the numbered list with brief descriptions for each slide. Be creative but professional.`,
+          },
+        ],
       };
 
       // Add tokens if available
-      addTokensToRequestBody(planRequestBody, token, repoInfo.type, providerParam, modelParam, isCustomModelParam, customModelParam, language);
+      addTokensToRequestBody(
+        planRequestBody,
+        token,
+        repoInfo.type,
+        providerParam,
+        modelParam,
+        isCustomModelParam,
+        customModelParam,
+        language
+      );
 
       // Use WebSocket for communication
-      let planContent = '';
+      let planContent = "";
 
       try {
         // Create WebSocket URL from the server base URL
-        const serverBaseUrl = process.env.NEXT_PUBLIC_SERVER_BASE_URL || 'http://localhost:8001';
-        const wsBaseUrl = serverBaseUrl.replace(/^http/, 'ws')? serverBaseUrl.replace(/^https/, 'wss'): serverBaseUrl.replace(/^http/, 'ws');
+        const serverBaseUrl =
+          process.env.NEXT_PUBLIC_SERVER_BASE_URL || "http://localhost:8001";
+        const wsBaseUrl = serverBaseUrl.replace(/^http/, "ws")
+          ? serverBaseUrl.replace(/^https/, "wss")
+          : serverBaseUrl.replace(/^http/, "ws");
         const wsUrl = `${wsBaseUrl}/ws/chat`;
 
         // Create a new WebSocket connection
@@ -276,21 +334,21 @@ Give me the numbered list with brief descriptions for each slide. Be creative bu
         await new Promise<void>((resolve, reject) => {
           let isResolved = false;
 
-          // If the connection doesn't open or complete within 10 seconds, fall back to HTTP
-          const timeout = setTimeout(() => {
-            if (!isResolved) {
-              isResolved = true;
-              // Try to close the WebSocket if it's still open
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.close();
-              }
-              reject(new Error('WebSocket connection timeout'));
-            }
-          }, 10000);
+          // // If the connection doesn't open or complete within 10 seconds, fall back to HTTP
+          // const timeout = setTimeout(() => {
+          //   if (!isResolved) {
+          //     isResolved = true;
+          //     // Try to close the WebSocket if it's still open
+          //     if (ws.readyState === WebSocket.OPEN) {
+          //       ws.close();
+          //     }
+          //     reject(new Error('WebSocket connection timeout'));
+          //   }
+          // }, 10000);
 
           // Set up event handlers
           ws.onopen = () => {
-            console.log('WebSocket connection established for slide plan');
+            console.log("WebSocket connection established for slide plan");
             // Send the request as JSON
             ws.send(JSON.stringify(planRequestBody));
             // Don't resolve here, wait for the complete response
@@ -302,8 +360,8 @@ Give me the numbered list with brief descriptions for each slide. Be creative bu
           };
 
           ws.onclose = () => {
-            clearTimeout(timeout);
-            console.log('WebSocket connection closed for slide plan');
+            // clearTimeout(timeout);
+            console.log("WebSocket connection closed for slide plan");
             if (!isResolved) {
               isResolved = true;
               resolve();
@@ -311,36 +369,38 @@ Give me the numbered list with brief descriptions for each slide. Be creative bu
           };
 
           ws.onerror = (error) => {
-            console.error('WebSocket error:', error);
+            console.error("WebSocket error:", error);
             if (!isResolved) {
               isResolved = true;
-              reject(new Error('WebSocket connection failed'));
+              reject(new Error("WebSocket connection failed"));
             }
           };
         });
       } catch (wsError) {
-        console.error('WebSocket error, falling back to HTTP:', wsError);
+        console.error("WebSocket error, falling back to HTTP:", wsError);
 
         // Fall back to HTTP if WebSocket fails
         const planResponse = await fetch(`/api/chat/stream`, {
-          method: 'POST',
+          method: "POST",
           headers: {
-            'Content-Type': 'application/json',
+            "Content-Type": "application/json",
           },
-          body: JSON.stringify(planRequestBody)
+          body: JSON.stringify(planRequestBody),
         });
 
         if (!planResponse.ok) {
-          throw new Error(`Error generating slide plan: ${planResponse.status}`);
+          throw new Error(
+            `Error generating slide plan: ${planResponse.status}`
+          );
         }
 
         // Process the plan response
-        planContent = '';
+        planContent = "";
         const planReader = planResponse.body?.getReader();
         const planDecoder = new TextDecoder();
 
         if (!planReader) {
-          throw new Error('Failed to get plan response reader');
+          throw new Error("Failed to get plan response reader");
         }
 
         try {
@@ -354,8 +414,8 @@ Give me the numbered list with brief descriptions for each slide. Be creative bu
           const finalChunk = planDecoder.decode();
           planContent += finalChunk;
         } catch (readError) {
-          console.error('Error reading plan stream:', readError);
-          throw new Error('Error processing plan response stream');
+          console.error("Error reading plan stream:", readError);
+          throw new Error("Error processing plan response stream");
         }
       }
 
@@ -393,7 +453,11 @@ Give me the numbered list with brief descriptions for each slide. Be creative bu
         const pattern4 = /^([^:\n]+)(?::\s*(.*?))?$/gm;
         while ((match = pattern4.exec(planContent)) !== null) {
           // Filter out very short lines or lines that look like instructions
-          if (match[1].length > 3 && !match[1].toLowerCase().includes("please") && !match[1].toLowerCase().includes("here")) {
+          if (
+            match[1].length > 3 &&
+            !match[1].toLowerCase().includes("please") &&
+            !match[1].toLowerCase().includes("here")
+          ) {
             slideMatches.push(match);
           }
         }
@@ -401,7 +465,9 @@ Give me the numbered list with brief descriptions for each slide. Be creative bu
 
       // If we still don't have matches, create some default slides
       if (slideMatches.length === 0) {
-        console.warn("Could not extract slide plan from response, using default slides");
+        console.warn(
+          "Could not extract slide plan from response, using default slides"
+        );
 
         // Create default slides
         const defaultSlides = [
@@ -411,7 +477,7 @@ Give me the numbered list with brief descriptions for each slide. Be creative bu
           `Features: Main capabilities and functionalities`,
           `Implementation: How it works and technical details`,
           `Use Cases: How to use ${repo} effectively`,
-          `Conclusion: Summary and next steps`
+          `Conclusion: Summary and next steps`,
         ];
 
         // Convert to match format
@@ -425,27 +491,31 @@ Give me the numbered list with brief descriptions for each slide. Be creative bu
 
       console.log(`Found ${slideMatches.length} slides in the plan`);
 
-
       // Now generate each slide one by one
       const generatedSlides: Slide[] = [];
       let slideCounter = 1;
 
       for (const slideMatch of slideMatches) {
-        const slideTitle = slideMatch[1].split(':')[0].trim();
-        const slideDescription = slideMatch[1].includes(':') ? slideMatch[1].split(':')[1].trim() : '';
+        const slideTitle = slideMatch[1].split(":")[0].trim();
+        const slideDescription = slideMatch[1].includes(":")
+          ? slideMatch[1].split(":")[1].trim()
+          : "";
 
-        setLoadingMessage(`Generating slide ${slideCounter} of ${slideMatches.length}: ${slideTitle}`);
+        setLoadingMessage(
+          `Generating slide ${slideCounter} of ${slideMatches.length}: ${slideTitle}`
+        );
 
         // Create a request for this specific slide
         const slideRequestBody: Record<string, unknown> = {
           repo_url: repoUrl,
           type: repoInfo.type,
-          messages: [{
-            role: 'user',
-            content: `Create a single HTML slide about the ${owner}/${repo} repository with the title "${slideTitle}".
+          messages: [
+            {
+              role: "user",
+              content: `Create a single HTML slide about the ${owner}/${repo} repository with the title "${slideTitle}".
 
 This is slide ${slideCounter} of ${slideMatches.length} in the presentation.
-${slideDescription ? `The slide should cover: ${slideDescription}` : ''}
+${slideDescription ? `The slide should cover: ${slideDescription}` : ""}
 
 Use the following wiki content as reference:
 ${wikiContent}
@@ -529,20 +599,33 @@ Here's a basic structure to build upon (but feel free to be creative):
     }
 </style>
 
-Please return ONLY the HTML with no markdown formatting or code blocks. Just the raw HTML for the slide.`
-          }]
+Please return ONLY the HTML with no markdown formatting or code blocks. Just the raw HTML for the slide.`,
+            },
+          ],
         };
 
         // Add tokens if available
-        addTokensToRequestBody(slideRequestBody, token, repoInfo.type, providerParam, modelParam, isCustomModelParam, customModelParam, language);
+        addTokensToRequestBody(
+          slideRequestBody,
+          token,
+          repoInfo.type,
+          providerParam,
+          modelParam,
+          isCustomModelParam,
+          customModelParam,
+          language
+        );
 
         // Use WebSocket for communication
-        let slideContent = '';
+        let slideContent = "";
 
         try {
           // Create WebSocket URL from the server base URL
-          const serverBaseUrl = process.env.NEXT_PUBLIC_SERVER_BASE_URL || 'http://localhost:8001';
-          const wsBaseUrl = serverBaseUrl.replace(/^http/, 'ws')? serverBaseUrl.replace(/^https/, 'wss'): serverBaseUrl.replace(/^http/, 'ws');
+          const serverBaseUrl =
+            process.env.NEXT_PUBLIC_SERVER_BASE_URL || "http://localhost:8001";
+          const wsBaseUrl = serverBaseUrl.replace(/^http/, "ws")
+            ? serverBaseUrl.replace(/^https/, "wss")
+            : serverBaseUrl.replace(/^http/, "ws");
           const wsUrl = `${wsBaseUrl}/ws/chat`;
 
           // Create a new WebSocket connection
@@ -552,21 +635,23 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
           await new Promise<void>((resolve, reject) => {
             let isResolved = false;
 
-            // If the connection doesn't open or complete within 10 seconds, fall back to HTTP
-            const timeout = setTimeout(() => {
-              if (!isResolved) {
-                isResolved = true;
-                // Try to close the WebSocket if it's still open
-                if (ws.readyState === WebSocket.OPEN) {
-                  ws.close();
-                }
-                reject(new Error('WebSocket connection timeout'));
-              }
-            }, 10000);
+            // // If the connection doesn't open or complete within 10 seconds, fall back to HTTP
+            // const timeout = setTimeout(() => {
+            //   if (!isResolved) {
+            //     isResolved = true;
+            //     // Try to close the WebSocket if it's still open
+            //     if (ws.readyState === WebSocket.OPEN) {
+            //       ws.close();
+            //     }
+            //     reject(new Error('WebSocket connection timeout'));
+            //   }
+            // }, 10000);
 
             // Set up event handlers
             ws.onopen = () => {
-              console.log(`WebSocket connection established for slide ${slideCounter}`);
+              console.log(
+                `WebSocket connection established for slide ${slideCounter}`
+              );
               // Send the request as JSON
               ws.send(JSON.stringify(slideRequestBody));
               // Don't resolve here, wait for the complete response
@@ -578,8 +663,10 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
             };
 
             ws.onclose = () => {
-              clearTimeout(timeout);
-              console.log(`WebSocket connection closed for slide ${slideCounter}`);
+              // clearTimeout(timeout);
+              console.log(
+                `WebSocket connection closed for slide ${slideCounter}`
+              );
               if (!isResolved) {
                 isResolved = true;
                 resolve();
@@ -587,31 +674,33 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
             };
 
             ws.onerror = (error) => {
-              console.error('WebSocket error:', error);
+              console.error("WebSocket error:", error);
               if (!isResolved) {
                 isResolved = true;
-                reject(new Error('WebSocket connection failed'));
+                reject(new Error("WebSocket connection failed"));
               }
             };
           });
         } catch (wsError) {
-          console.error('WebSocket error, falling back to HTTP:', wsError);
+          console.error("WebSocket error, falling back to HTTP:", wsError);
 
           // Fall back to HTTP if WebSocket fails
           const slideResponse = await fetch(`/api/chat/stream`, {
-            method: 'POST',
+            method: "POST",
             headers: {
-              'Content-Type': 'application/json',
+              "Content-Type": "application/json",
             },
-            body: JSON.stringify(slideRequestBody)
+            body: JSON.stringify(slideRequestBody),
           });
 
           if (!slideResponse.ok) {
-            throw new Error(`Error generating slide ${slideCounter}: ${slideResponse.status}`);
+            throw new Error(
+              `Error generating slide ${slideCounter}: ${slideResponse.status}`
+            );
           }
 
           // Process the slide response
-          slideContent = '';
+          slideContent = "";
           const slideReader = slideResponse.body?.getReader();
           const slideDecoder = new TextDecoder();
 
@@ -630,32 +719,41 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
             const finalChunk = slideDecoder.decode();
             slideContent += finalChunk;
           } catch (readError) {
-            console.error(`Error reading slide ${slideCounter} stream:`, readError);
-            throw new Error(`Error processing slide ${slideCounter} response stream`);
+            console.error(
+              `Error reading slide ${slideCounter} stream:`,
+              readError
+            );
+            throw new Error(
+              `Error processing slide ${slideCounter} response stream`
+            );
           }
         }
 
         // Extract HTML content - look for content between HTML tags or code blocks
-        let slideHtml = '';
+        let slideHtml = "";
 
         console.log(`Processing slide ${slideCounter} response`);
 
         // Try to extract from code blocks if present
-        const codeBlockMatch = slideContent.match(/```(?:html)?\s*([\s\S]*?)\s*```/);
+        const codeBlockMatch = slideContent.match(
+          /```(?:html)?\s*([\s\S]*?)\s*```/
+        );
         if (codeBlockMatch) {
           slideHtml = codeBlockMatch[1];
           console.log("Extracted HTML from code block");
         }
         // Try to extract content between <div class="slide"> and closing </div>
         else if (slideContent.includes('<div class="slide"')) {
-          const divMatch = slideContent.match(/<div class="slide"[\s\S]*?<\/div>\s*<\/div>/);
+          const divMatch = slideContent.match(
+            /<div class="slide"[\s\S]*?<\/div>\s*<\/div>/
+          );
           if (divMatch) {
             slideHtml = divMatch[0];
             console.log("Extracted HTML from div tags");
           }
         }
         // Try to extract any HTML-like content
-        else if (slideContent.includes('<') && slideContent.includes('>')) {
+        else if (slideContent.includes("<") && slideContent.includes(">")) {
           const htmlTagMatch = slideContent.match(/<[\s\S]*?>/);
           if (htmlTagMatch) {
             // Find the first HTML tag
@@ -663,7 +761,10 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
             if (firstTag && firstTag[1]) {
               const tagName = firstTag[1];
               // Try to extract everything from this opening tag to its closing tag
-              const fullTagRegex = new RegExp(`<${tagName}[\\s\\S]*?<\\/${tagName}>`, 'i');
+              const fullTagRegex = new RegExp(
+                `<${tagName}[\\s\\S]*?<\\/${tagName}>`,
+                "i"
+              );
               const fullTagMatch = slideContent.match(fullTagRegex);
               if (fullTagMatch) {
                 slideHtml = fullTagMatch[0];
@@ -680,7 +781,10 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
         }
 
         // Add default styling if not present
-        if (!slideHtml.includes('<style>') && !slideHtml.includes('<link rel="stylesheet"')) {
+        if (
+          !slideHtml.includes("<style>") &&
+          !slideHtml.includes('<link rel="stylesheet"')
+        ) {
           slideHtml = `
 <div class="slide">
     <div class="code-pattern"></div>
@@ -830,9 +934,9 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
     .bg-accent-purple { background-color: rgba(137, 87, 229, 0.2); }
 </style>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.css">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@10.0.0/dist/mermaid.min.js"></script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/11.12.0/mermaid.min.js"></script>
 <script>
   // Initialize Mermaid for diagrams if present
   document.addEventListener('DOMContentLoaded', function() {
@@ -858,7 +962,7 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
           id: `slide-${slideCounter}`,
           title: slideTitle,
           content: slideDescription || slideTitle,
-          html: slideHtml
+          html: slideHtml,
         };
 
         // Add to our slides array
@@ -872,20 +976,35 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
 
       // Set the final slides
       setSlides(generatedSlides);
-
     } catch (err) {
-      console.error('Error generating slides content:', err);
-      setError(err instanceof Error ? err.message : 'An unknown error occurred');
+      console.error("Error generating slides content:", err);
+      setError(
+        err instanceof Error ? err.message : "An unknown error occurred"
+      );
     } finally {
       setIsLoading(false);
       setLoadingMessage(undefined);
     }
-  }, [owner, repo, repoInfo, token, providerParam, modelParam, isCustomModelParam, customModelParam, language, isLoading, messages.loading, cachedWikiContent, fetchCachedWikiContent]);
+  }, [
+    owner,
+    repo,
+    repoInfo,
+    token,
+    providerParam,
+    modelParam,
+    isCustomModelParam,
+    customModelParam,
+    language,
+    isLoading,
+    messages.loading,
+    cachedWikiContent,
+    fetchCachedWikiContent,
+  ]);
 
   // Export slides content
   const exportSlides = useCallback(async () => {
     if (!slides || slides.length === 0) {
-      setExportError('No slides to export');
+      setExportError("No slides to export");
       return;
     }
 
@@ -902,9 +1021,9 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${repo} Slides</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.css">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/mermaid@10.0.0/dist/mermaid.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/11.12.0/mermaid.min.js"></script>
+
   <style>
     body {
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -1018,7 +1137,9 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
   </style>
 </head>
 <body>
-  ${slides.map(slide => `<div class="slide-container">${slide.html}</div>`).join('\n')}
+  ${slides
+    .map((slide) => `<div class="slide-container">${slide.html}</div>`)
+    .join("\n")}
 
   <!-- Navigation controls (only visible in browser) -->
   <div class="nav-controls">
@@ -1026,7 +1147,9 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
       <i class="fas fa-chevron-left"></i>
     </div>
     <div class="slide-indicator">
-      <span id="current-slide">1</span>/<span id="total-slides">${slides.length}</span>
+      <span id="current-slide">1</span>/<span id="total-slides">${
+        slides.length
+      }</span>
     </div>
     <div class="nav-btn next-slide" onclick="nextSlide()">
       <i class="fas fa-chevron-right"></i>
@@ -1104,19 +1227,20 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
       `;
 
       // Create a blob with the HTML content
-      const blob = new Blob([htmlContent], { type: 'text/html' });
+      const blob = new Blob([htmlContent], { type: "text/html" });
       const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
+      const a = document.createElement("a");
       a.href = url;
       a.download = `${repo}_slides.html`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-
     } catch (err) {
-      console.error('Error exporting slides:', err);
-      setExportError(err instanceof Error ? err.message : 'An unknown error occurred');
+      console.error("Error exporting slides:", err);
+      setExportError(
+        err instanceof Error ? err.message : "An unknown error occurred"
+      );
     } finally {
       setIsExporting(false);
     }
@@ -1125,37 +1249,37 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
   // Navigation functions
   const goToNextSlide = useCallback(() => {
     if (currentSlideIndex < slides.length - 1) {
-      setCurrentSlideIndex(prev => prev + 1);
+      setCurrentSlideIndex((prev) => prev + 1);
     }
   }, [currentSlideIndex, slides.length]);
 
   const goToPrevSlide = useCallback(() => {
     if (currentSlideIndex > 0) {
-      setCurrentSlideIndex(prev => prev - 1);
+      setCurrentSlideIndex((prev) => prev - 1);
     }
   }, [currentSlideIndex]);
 
   const toggleFullscreen = useCallback(() => {
-    setIsFullscreen(prev => !prev);
+    setIsFullscreen((prev) => !prev);
   }, []);
 
   // Handle keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowRight' || e.key === 'Space') {
+      if (e.key === "ArrowRight" || e.key === "Space") {
         goToNextSlide();
-      } else if (e.key === 'ArrowLeft') {
+      } else if (e.key === "ArrowLeft") {
         goToPrevSlide();
-      } else if (e.key === 'f' || e.key === 'F') {
+      } else if (e.key === "f" || e.key === "F") {
         toggleFullscreen();
-      } else if (e.key === 'Escape' && isFullscreen) {
+      } else if (e.key === "Escape" && isFullscreen) {
         setIsFullscreen(false);
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown);
     return () => {
-      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener("keydown", handleKeyDown);
     };
   }, [goToNextSlide, goToPrevSlide, toggleFullscreen, isFullscreen]);
 
@@ -1176,7 +1300,13 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
   }, [generateSlidesContent, fetchCachedWikiContent]);
 
   return (
-    <div className={`min-h-screen flex flex-col ${isFullscreen ? 'fixed inset-0 z-50 bg-[#0d1117]' : 'bg-[var(--background)]'}`}>
+    <div
+      className={`min-h-screen flex flex-col ${
+        isFullscreen
+          ? "fixed inset-0 z-50 bg-[#0d1117]"
+          : "bg-[var(--background)]"
+      }`}
+    >
       {/* Header - Hide in fullscreen mode */}
       {!isFullscreen && (
         <header className="sticky top-0 z-10 bg-[var(--card-bg)] border-b border-[var(--border-color)] shadow-sm">
@@ -1187,33 +1317,41 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
                 className="flex items-center text-[var(--foreground)] hover:text-[var(--accent-primary)] transition-colors"
               >
                 <FaArrowLeft className="mr-2" />
-                <span>{messages.slides?.backToWiki || 'Back to Wiki'}</span>
+                <span>{messages.slides?.backToWiki || "Back to Wiki"}</span>
               </Link>
               <h1 className="text-xl font-bold text-[var(--accent-primary)]">
-                {messages.slides?.title || 'Slides'}: {repo}
+                {messages.slides?.title || "Slides"}: {repo}
               </h1>
             </div>
             <div className="flex items-center space-x-3">
               <button
                 onClick={generateSlidesContent}
                 disabled={isLoading}
-                className={`p-2 rounded-md ${isLoading ? 'bg-[var(--button-disabled-bg)] text-[var(--button-disabled-text)]' : 'bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/20'} transition-colors`}
-                title={messages.slides?.regenerate || 'Regenerate Slides'}
+                className={`p-2 rounded-md ${
+                  isLoading
+                    ? "bg-[var(--button-disabled-bg)] text-[var(--button-disabled-text)]"
+                    : "bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/20"
+                } transition-colors`}
+                title={messages.slides?.regenerate || "Regenerate Slides"}
               >
-                <FaSync className={`${isLoading ? 'animate-spin' : ''}`} />
+                <FaSync className={`${isLoading ? "animate-spin" : ""}`} />
               </button>
               <button
                 onClick={exportSlides}
                 disabled={!slides.length || isExporting}
-                className={`p-2 rounded-md ${!slides.length || isExporting ? 'bg-[var(--button-disabled-bg)] text-[var(--button-disabled-text)]' : 'bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/20'} transition-colors`}
-                title={messages.slides?.export || 'Export Slides'}
+                className={`p-2 rounded-md ${
+                  !slides.length || isExporting
+                    ? "bg-[var(--button-disabled-bg)] text-[var(--button-disabled-text)]"
+                    : "bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/20"
+                } transition-colors`}
+                title={messages.slides?.export || "Export Slides"}
               >
                 <FaDownload />
               </button>
               <button
                 onClick={toggleFullscreen}
                 className="p-2 rounded-md bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/20 transition-colors"
-                title={messages.slides?.fullscreen || 'Toggle Fullscreen'}
+                title={messages.slides?.fullscreen || "Toggle Fullscreen"}
               >
                 <FaArrowUp />
               </button>
@@ -1224,7 +1362,11 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
       )}
 
       {/* Main content */}
-      <main className={`flex-1 flex flex-col ${isFullscreen ? 'p-0' : 'container mx-auto px-4 py-6'}`}>
+      <main
+        className={`flex-1 flex flex-col ${
+          isFullscreen ? "p-0" : "container mx-auto px-4 py-6"
+        }`}
+      >
         {isLoading && !slides.length ? (
           <div className="flex flex-col items-center justify-center p-8 flex-grow">
             <div className="w-12 h-12 border-4 border-[var(--accent-primary)]/30 border-t-[var(--accent-primary)] rounded-full animate-spin mb-4"></div>
@@ -1232,47 +1374,87 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
           </div>
         ) : error ? (
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md p-4 mb-6">
-            <h3 className="text-red-800 dark:text-red-400 font-medium mb-2">{messages.common?.error || 'Error'}</h3>
+            <h3 className="text-red-800 dark:text-red-400 font-medium mb-2">
+              {messages.common?.error || "Error"}
+            </h3>
             <p className="text-red-700 dark:text-red-300">{error}</p>
           </div>
         ) : slides.length > 0 ? (
           <div className="flex flex-col flex-grow">
             {/* Slide content */}
-            <div className={`flex-grow flex flex-col items-center justify-center ${isFullscreen ? 'p-0 bg-[#0d1117]' : 'bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg shadow-sm p-6 mb-4'}`}>
+            <div
+              className={`flex-grow flex flex-col items-center justify-center ${
+                isFullscreen
+                  ? "p-0 bg-[#0d1117]"
+                  : "bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg shadow-sm p-6 mb-4"
+              }`}
+            >
               {exportError && (
                 <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md p-3 mb-4 w-full">
-                  <p className="text-red-700 dark:text-red-300 text-sm">{exportError}</p>
+                  <p className="text-red-700 dark:text-red-300 text-sm">
+                    {exportError}
+                  </p>
                 </div>
               )}
 
               {/* Current slide */}
               <div
-                className={`${isFullscreen ? 'w-full h-full' : 'w-full max-w-[1280px] aspect-[16/9]'} flex items-center justify-center overflow-hidden`}
+                className={`${
+                  isFullscreen
+                    ? "w-full h-full"
+                    : "w-full max-w-[1280px] aspect-[16/9]"
+                } flex items-center justify-center overflow-hidden`}
               >
                 {/* Include Font Awesome for icons */}
-                <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" />
-                <div className="w-full h-full" dangerouslySetInnerHTML={{ __html: slides[currentSlideIndex]?.html || '' }} />
+                <link
+                  rel="stylesheet"
+                  href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css"
+                />
+                <div
+                  className="w-full h-full"
+                  dangerouslySetInnerHTML={{
+                    __html: slides[currentSlideIndex]?.html || "",
+                  }}
+                />
               </div>
             </div>
 
             {/* Navigation controls */}
-            <div className={`flex items-center justify-between ${isFullscreen ? 'fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-[#0d1117]/80 px-6 py-3 rounded-full z-10 shadow-lg' : 'mt-4'}`}>
+            <div
+              className={`flex items-center justify-between ${
+                isFullscreen
+                  ? "fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-[#0d1117]/80 px-6 py-3 rounded-full z-10 shadow-lg"
+                  : "mt-4"
+              }`}
+            >
               <button
                 onClick={goToPrevSlide}
                 disabled={currentSlideIndex === 0}
-                className={`p-2 rounded-md ${currentSlideIndex === 0 ? 'bg-[var(--button-disabled-bg)] text-[var(--button-disabled-text)]' : 'bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/20'} transition-colors`}
+                className={`p-2 rounded-md ${
+                  currentSlideIndex === 0
+                    ? "bg-[var(--button-disabled-bg)] text-[var(--button-disabled-text)]"
+                    : "bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/20"
+                } transition-colors`}
               >
                 <FaArrowLeft />
               </button>
 
-              <div className={`text-[var(--foreground)] ${isFullscreen ? 'mx-4' : ''}`}>
+              <div
+                className={`text-[var(--foreground)] ${
+                  isFullscreen ? "mx-4" : ""
+                }`}
+              >
                 Slide {currentSlideIndex + 1} of {slides.length}
               </div>
 
               <button
                 onClick={goToNextSlide}
                 disabled={currentSlideIndex === slides.length - 1}
-                className={`p-2 rounded-md ${currentSlideIndex === slides.length - 1 ? 'bg-[var(--button-disabled-bg)] text-[var(--button-disabled-text)]' : 'bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/20'} transition-colors`}
+                className={`p-2 rounded-md ${
+                  currentSlideIndex === slides.length - 1
+                    ? "bg-[var(--button-disabled-bg)] text-[var(--button-disabled-text)]"
+                    : "bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/20"
+                } transition-colors`}
               >
                 <FaArrowRight />
               </button>
@@ -1281,7 +1463,7 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
                 <button
                   onClick={toggleFullscreen}
                   className="p-2 ml-4 rounded-md bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/20 transition-colors"
-                  title={messages.slides?.fullscreen || 'Exit Fullscreen'}
+                  title={messages.slides?.fullscreen || "Exit Fullscreen"}
                 >
                   <FaTimes />
                 </button>
@@ -1290,7 +1472,10 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center p-8 flex-grow">
-            <p className="text-[var(--foreground)]">{messages.slides?.noSlides || 'No slides generated yet. Click the refresh button to generate slides.'}</p>
+            <p className="text-[var(--foreground)]">
+              {messages.slides?.noSlides ||
+                "No slides generated yet. Click the refresh button to generate slides."}
+            </p>
           </div>
         )}
       </main>

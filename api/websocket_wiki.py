@@ -89,7 +89,8 @@ class ChatCompletionRequest(BaseModel):
         None, description="Comma-separated list of directories to include exclusively")
     included_files: Optional[str] = Field(
         None, description="Comma-separated list of file patterns to include exclusively")
-
+    deep_research: Optional[bool] = Field(False, description="Enable deep research mode")  
+    max_iterations: Optional[int] = Field(5, description="Maximum research iterations")
 
 async def handle_websocket_chat(websocket: WebSocket):
     """
@@ -204,11 +205,14 @@ async def handle_websocket_chat(websocket: WebSocket):
         is_deep_research = False
         research_iteration = 1
 
-        # Process messages to detect Deep Research requests
-        for msg in request.messages:
-            if hasattr(msg, 'content') and msg.content and "[DEEP RESEARCH]" in msg.content:
-                is_deep_research = True
-                # Only remove the tag from the last message
+        if request.deep_research:
+            is_deep_research = True
+        else:
+            # Fallback: check for Deep Research tag in messages
+            for msg in request.messages:
+                if hasattr(msg, 'content') and msg.content and "[DEEP RESEARCH]" in msg.content:
+                    is_deep_research = True
+                    # Only remove the tag from the last message
                 if msg == request.messages[-1]:
                     # Remove the Deep Research tag
                     msg.content = msg.content.replace(
@@ -216,6 +220,7 @@ async def handle_websocket_chat(websocket: WebSocket):
 
         # Count research iterations if this is a Deep Research request
         if is_deep_research:
+            logger.info(f"[DEEP RESEARCH] MESSAGES.count: {len(request.messages)}")
             research_iteration = sum(
                 1 for msg in request.messages if msg.role == 'assistant') + 1
             logger.info(
@@ -329,7 +334,7 @@ async def handle_websocket_chat(websocket: WebSocket):
             is_first_iteration = research_iteration == 1
 
             # Check if this is the final iteration
-            is_final_iteration = research_iteration >= 5
+            is_final_iteration = research_iteration >= (request.max_iterations or 5)
 
             if is_first_iteration:
                 system_prompt = DEEP_RESEARCH_FIRST_ITERATION_PROMPT.format(
@@ -353,7 +358,8 @@ async def handle_websocket_chat(websocket: WebSocket):
                     repo_name=repo_name,
                     research_iteration=research_iteration,
                     language_name=language_name
-                )                
+                )
+            # logger.info(f"## Formatted system_prompt: {system_prompt}")                
         else:
             system_prompt = SIMPLE_CHAT_SYSTEM_PROMPT.format(
                 repo_type=repo_type,
