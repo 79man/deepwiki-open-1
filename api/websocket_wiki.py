@@ -89,8 +89,11 @@ class ChatCompletionRequest(BaseModel):
         None, description="Comma-separated list of directories to include exclusively")
     included_files: Optional[str] = Field(
         None, description="Comma-separated list of file patterns to include exclusively")
-    deep_research: Optional[bool] = Field(False, description="Enable deep research mode")  
-    max_iterations: Optional[int] = Field(5, description="Maximum research iterations")
+    deep_research: Optional[bool] = Field(
+        False, description="Enable deep research mode")
+    max_iterations: Optional[int] = Field(
+        5, description="Maximum research iterations")
+
 
 async def handle_websocket_chat(websocket: WebSocket):
     """
@@ -112,12 +115,14 @@ async def handle_websocket_chat(websocket: WebSocket):
                 tokens = count_tokens(
                     last_message.content, request.provider == "ollama")
                 # logger.info(f"Request size: {tokens} tokens")
-                # Get context window size for this provider/model  
-                context_window = get_context_window_size(request.provider, request.model)  
-                # Use 80% of context window as safe limit to leave room for response  
+                # Get context window size for this provider/model
+                context_window = get_context_window_size(
+                    request.provider, request.model)
+                # Use 80% of context window as safe limit to leave room for response
                 safe_limit = int(context_window * 0.8)
 
-                logger.info(f"Request size: {tokens} tokens (limit: {safe_limit})")  
+                logger.info(
+                    f"Request size: {tokens} tokens (limit: {safe_limit})")
 
                 if tokens > safe_limit:
                     logger.warning(
@@ -203,6 +208,7 @@ async def handle_websocket_chat(websocket: WebSocket):
 
         # Check if this is a Deep Research request
         is_deep_research = False
+        max_iterations = request.max_iterations or 5
         research_iteration = 1
 
         if request.deep_research:
@@ -212,50 +218,73 @@ async def handle_websocket_chat(websocket: WebSocket):
             for msg in request.messages:
                 if hasattr(msg, 'content') and msg.content and "[DEEP RESEARCH]" in msg.content:
                     is_deep_research = True
-                    # Only remove the tag from the last message
-                if msg == request.messages[-1]:
-                    # Remove the Deep Research tag
-                    msg.content = msg.content.replace(
-                        "[DEEP RESEARCH]", "").strip()
+                    break
 
         # Count research iterations if this is a Deep Research request
+        # Get the query from the last message
+        query = last_message.content
+        
         if is_deep_research:
-            logger.info(f"[DEEP RESEARCH] MESSAGES.count: {len(request.messages)}")
-            research_iteration = sum(
-                1 for msg in request.messages if msg.role == 'assistant') + 1
+
+            # Only remove the tag from the last_message
+            if last_message:
+                last_message.content = last_message.content.replace(
+                    "[DEEP RESEARCH]", "").strip()
+
+            logger.info(
+                f"[DEEP RESEARCH] MESSAGES.count: {len(request.messages)}")
+
+            # user_turns = [m for m in request.messages if m.role == 'user']
+            assistant_turns = [
+                m for m in request.messages if m.role == 'assistant']
+            research_iteration = len(assistant_turns) + 1
+            logger.info(
+                f"[DEEP RESEARCH] assistant turns: {len(assistant_turns)}, research_iteration: {research_iteration}"
+            )
+
+            # research_iteration = sum(
+            #     1 for msg in request.messages if msg.role == 'assistant') + 1
             logger.info(
                 f"Deep Research request detected - iteration {research_iteration}")
 
             # Check if this is a continuation request
-            if "continue" in last_message.content.lower() and "research" in last_message.content.lower():
-                # Find the original topic from the first user message
-                original_topic = None
+            # if "continue" in last_message.content.lower() and "research" in last_message.content.lower():
+            #     # Find the original topic from the first user message
+            #     original_topic = None
+            #     for msg in request.messages:
+            #         if msg.role == "user" and "continue" not in msg.content.lower():
+            #             original_topic = msg.content.replace(
+            #                 "[DEEP RESEARCH]", "").strip()
+            #             logger.info(
+            #                 f"Found original research topic: {original_topic}")
+            #             break
+
+            #     if original_topic:
+            #         # Replace the continuation message with the original topic
+            #         last_message.content = original_topic
+            #         logger.info(
+            #             f"Using original topic for research: {original_topic}")
+
+            # For continuations, use the first user message as the query
+            if research_iteration > 1:
                 for msg in request.messages:
-                    if msg.role == "user" and "continue" not in msg.content.lower():
-                        original_topic = msg.content.replace(
-                            "[DEEP RESEARCH]", "").strip()
-                        logger.info(
-                            f"Found original research topic: {original_topic}")
-                        break
-
-                if original_topic:
-                    # Replace the continuation message with the original topic
-                    last_message.content = original_topic
-                    logger.info(
-                        f"Using original topic for research: {original_topic}")
-
-        # Get the query from the last message
-        query = last_message.content
+                    if msg.role == "user":
+                        # No need to remove tag again - already done above
+                        query = msg.content
+                        logger.info(f"Using original topic: {query[:50]}...")
+                        break            
 
         # Only retrieve documents if input is not too large
         context_text = ""
         retrieved_documents = None
+        retrieved_documents_count = 0
 
         logger.info(f"input_too_large: {input_too_large}")
+        rag_query = query
         if not input_too_large:
             try:
                 # If filePath exists, modify the query for RAG to focus on the file
-                rag_query = query
+
                 if request.filePath:
                     # Use the file path to get relevant context about the file
                     rag_query = f"Contexts related to {request.filePath}"
@@ -265,7 +294,9 @@ async def handle_websocket_chat(websocket: WebSocket):
                 # Try to perform RAG retrieval
                 try:
                     # This will use the actual RAG implementation
-                    rag_answer, retrieved_documents = request_rag(query=rag_query, language=request.language)
+                    logger.info(f"RAG Query: {rag_query}")
+                    rag_answer, retrieved_documents = request_rag(
+                        query=rag_query, language=request.language)
 
                     if retrieved_documents and retrieved_documents[0].documents:
                         # Format context for the prompt in a more structured way
@@ -273,6 +304,7 @@ async def handle_websocket_chat(websocket: WebSocket):
                         # Extract scores
                         doc_scores = retrieved_documents[0].doc_scores
                         logger.info(f"Retrieved {len(documents)} documents")
+                        retrieved_documents_count = len(documents)
 
                         # Group documents by file path with their scores
                         docs_by_file = {}
@@ -316,6 +348,14 @@ async def handle_websocket_chat(websocket: WebSocket):
                 logger.error(f"Error retrieving documents: {str(e)}")
                 context_text = ""
 
+        # Send the Rag Query and RAG results back to the client
+
+        await websocket.send_text(json.dumps({
+            "type": "rag_details",
+            "query": rag_query,
+            "retrieved" : retrieved_documents_count,
+            "results": context_text
+        }))
         # Get repository information
         repo_url = request.repo_url
         repo_name = repo_url.split("/")[-1] if "/" in repo_url else repo_url
@@ -334,7 +374,8 @@ async def handle_websocket_chat(websocket: WebSocket):
             is_first_iteration = research_iteration == 1
 
             # Check if this is the final iteration
-            is_final_iteration = research_iteration >= (request.max_iterations or 5)
+            is_final_iteration = research_iteration >= (
+                request.max_iterations or 5)
 
             if is_first_iteration:
                 system_prompt = DEEP_RESEARCH_FIRST_ITERATION_PROMPT.format(
@@ -350,7 +391,7 @@ async def handle_websocket_chat(websocket: WebSocket):
                     repo_name=repo_name,
                     research_iteration=research_iteration,
                     language_name=language_name
-                )                
+                )
             else:
                 system_prompt = DEEP_RESEARCH_INTERMEDIATE_ITERATION_PROMPT.format(
                     repo_type=repo_type,
@@ -359,7 +400,7 @@ async def handle_websocket_chat(websocket: WebSocket):
                     research_iteration=research_iteration,
                     language_name=language_name
                 )
-            # logger.info(f"## Formatted system_prompt: {system_prompt}")                
+            # logger.info(f"## Formatted system_prompt: {system_prompt}")
         else:
             system_prompt = SIMPLE_CHAT_SYSTEM_PROMPT.format(
                 repo_type=repo_type,
@@ -415,6 +456,7 @@ async def handle_websocket_chat(websocket: WebSocket):
         logger.info(
             f"Manoj: request.provider, request.model:{request.provider}, {request.model}")
         logger.info(f"Manoj: model_config:{model_config}")
+
         if request.provider == "ollama":
             prompt += " /no_think"
             logger.info("Manoj: Creating MyOllamaClient")
@@ -429,7 +471,8 @@ async def handle_websocket_chat(websocket: WebSocket):
                 }
             }
 
-            logger.info(f"B4 convert_inputs_to_api_kwargs:\nmodel_kwargs:\n{model_kwargs}")
+            logger.info(
+                f"B4 convert_inputs_to_api_kwargs:\nmodel_kwargs:\n{model_kwargs}")
 
             api_kwargs = model.convert_inputs_to_api_kwargs(
                 input=prompt,
@@ -437,9 +480,8 @@ async def handle_websocket_chat(websocket: WebSocket):
                 model_type=ModelType.LLM
             )
 
-            logger.info(f"After convert_inputs_to_api_kwargs: api_kwargs:\n{api_kwargs}")
-
-
+            logger.info(
+                f"After convert_inputs_to_api_kwargs: api_kwargs:\n{api_kwargs}")
         elif request.provider == "openrouter":
             logger.info(f"Using OpenRouter with model: {request.model}")
 
@@ -534,6 +576,17 @@ async def handle_websocket_chat(websocket: WebSocket):
                 }
             )
 
+        # Send iteration status update
+        if is_deep_research:
+            status_message = json.dumps({
+                "type": "iteration_status",
+                "current_iteration": research_iteration,
+                "max_iterations": request.max_iterations or 5,
+                "status": "in_progress"
+            })
+            await websocket.send_text(status_message)
+            logger.info(f"Sent iteration status: {status_message}")
+
         # Process the response based on the provider
         try:
             if request.provider == "ollama":
@@ -547,6 +600,12 @@ async def handle_websocket_chat(websocket: WebSocket):
                         "prompt": str(api_kwargs),
                         "repo_url": getattr(request, 'repo_url', 'unknown')
                     }))
+
+                # Send the actual prompt to client for logging
+                await websocket.send_text(json.dumps({
+                    "type": "llm_prompt",
+                    "content": prompt
+                }))
 
                 # Get the response and handle it properly using the previously created api_kwargs
                 response = await model.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
@@ -572,6 +631,22 @@ async def handle_websocket_chat(websocket: WebSocket):
                         text = text.replace(
                             '<think>', '').replace('</think>', '')
                         await websocket.send_text(text)
+
+                logger.info(
+                    f"[DEBUG] Ollama streaming complete for iteration: {research_iteration}, is_deep_research:{is_deep_research} ")
+
+                # Send completion status for deep research
+                if is_deep_research:
+                    completion_message = json.dumps({
+                        "type": "iteration_status",
+                        "current_iteration": research_iteration,
+                        "max_iterations": request.max_iterations or 5,
+                        "status": "complete"
+                    })
+                    await websocket.send_text(completion_message)
+                    logger.info(
+                        f"Sent iteration completion: {completion_message}")
+
                 # Explicitly close the WebSocket connection after the response is complete
                 await websocket.close()
 
@@ -585,7 +660,6 @@ async def handle_websocket_chat(websocket: WebSocket):
                         "response": full_response,
                         "repo_url": getattr(request, 'repo_url', 'unknown')
                     }))
-
             elif request.provider == "openrouter":
                 try:
                     # Get the response and handle it properly using the previously created api_kwargs
@@ -688,6 +762,27 @@ async def handle_websocket_chat(websocket: WebSocket):
                             model_kwargs=model_kwargs,
                             model_type=ModelType.LLM
                         )
+                        '''
+                        /no_think {system_prompt}  
+  
+                        <conversation_history>  
+                        {previous dialog turns}  
+                        </conversation_history>  
+                        
+                        <currentFileContent path="...">  
+                        {file content if filePath provided}  
+                        </currentFileContent>  
+                        
+                        <START_OF_CONTEXT>  
+                        {RAG-retrieved code snippets with relevance scores}  
+                        <END_OF_CONTEXT>  
+                        
+                        <query>  
+                        {user's query - the original topic for iterations 2+}  
+                        </query>
+
+                        Assistant:  /no_think  
+                        '''
 
                         # Get the response using the simplified prompt
                         fallback_response = await model.acall(api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM)

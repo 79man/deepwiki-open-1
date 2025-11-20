@@ -39,6 +39,11 @@ import {
 import PromptEditorModal from "@/components/PromptEditorModal"; // Adjust import path if needed
 import { usePromptLog } from "@/contexts/PromptLogContext";
 import PromptLogFloatingPanel from "@/components/PromptLogFloatingPanel";
+import {
+  createChatWebSocket,
+  closeWebSocket,
+  ChatCompletionRequest,
+} from "@/utils/websocketClient";
 
 // Define the WikiSection and WikiStructure types directly in this file
 // since the imported types don't have the sections and rootSections properties
@@ -127,6 +132,11 @@ interface RepoDeepAnalysis {
   domain_concepts: Record<string, string>;
 }
 
+interface Message {
+  role: "user" | "assistant";
+  content: string;
+}
+
 // Add CSS styles for wiki with Japanese aesthetic
 const wikiStyles = `
   .prose code {
@@ -212,7 +222,7 @@ const getCacheKey = (
 // Helper function to add tokens and other parameters to request body
 const addTokensToRequestBody = (
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  requestBody: Record<string, any>,
+  requestBody: ChatCompletionRequest,
   token: string,
   repoType: string,
   provider: string = "",
@@ -467,6 +477,21 @@ export default function RepoWikiPage() {
   // Default branch state
   const [defaultBranch, setDefaultBranch] = useState<string>("main");
 
+  // Deep Research state for page refresh
+  const [deepResearchEnabled, setDeepResearchEnabled] = useState(false);
+  const [currentIteration, setCurrentIteration] = useState(0);
+  const [maxIterations, setMaxIterations] = useState(5);
+  const [pageConversationHistory, setPageConversationHistory] = useState<
+    Record<string, Message[]>
+  >({});
+  const [researchComplete, setResearchComplete] = useState(false);
+  // WebSocket reference
+  const webSocketRef = useRef<WebSocket | null>(null);
+  const conversationHistoryRef = useRef(pageConversationHistory);
+  const currentIterationRef = useRef(currentIteration);
+  const researchCompleteRef = useRef(researchComplete);
+  let latestIterationRef = useRef(0);
+
   function showPromptEditModal(
     prompt: string,
     model: string = "-",
@@ -536,6 +561,23 @@ export default function RepoWikiPage() {
       wikiContent.scrollTo({ top: 0, behavior: "smooth" });
     }
   }, [currentPageId]);
+
+  useEffect(() => {
+    currentIterationRef.current = currentIteration;
+  }, [currentIteration]);
+
+  useEffect(() => {
+    researchCompleteRef.current = researchComplete;
+  }, [researchComplete]);
+
+  // Update conversationHistoryRef whenever pageConversationHistory changes
+  useEffect(() => {
+    conversationHistoryRef.current = pageConversationHistory;
+  }, [pageConversationHistory]);
+
+  useEffect(() => {
+    latestIterationRef.current = currentIteration;
+  }, [currentIteration]);
 
   // close the modal when escape is pressed
   useEffect(() => {
@@ -650,7 +692,7 @@ export default function RepoWikiPage() {
         }
       }
 
-      const requestBody = {
+      const requestBody: ChatCompletionRequest = {
         repo_url: getRepoUrl(effectiveRepoInfo),
         type: effectiveRepoInfo.type,
         messages: [
@@ -831,7 +873,7 @@ Return ONLY valid JSON, no markdown formatting.`;
         }
       }
 
-      const requestBody = {
+      const requestBody: ChatCompletionRequest = {
         repo_url: getRepoUrl(effectiveRepoInfo),
         type: effectiveRepoInfo.type,
         messages: [
@@ -1345,23 +1387,115 @@ COMPONENT PAGE SPECIFIC INSTRUCTIONS:
     }
   };
 
+  const getLanguageName = (language: string): string => {
+    return language === "en"
+      ? "English"
+      : language === "ja"
+      ? "Japanese (日本語)"
+      : language === "zh"
+      ? "Mandarin Chinese (中文)"
+      : language === "zh-tw"
+      ? "Traditional Chinese (繁體中文)"
+      : language === "es"
+      ? "Spanish (Español)"
+      : language === "kr"
+      ? "Korean (한국어)"
+      : language === "vi"
+      ? "Vietnamese (Tiếng Việt)"
+      : language === "pt-br"
+      ? "Brazilian Portuguese (Português Brasileiro)"
+      : language === "fr"
+      ? "Français (French)"
+      : language === "ru"
+      ? "Русский (Russian)"
+      : "English";
+  };
+
   const buildPageGenerationPrompt = (
     page: WikiPage,
-    params?: ModelSelectionParams
+    params?: ModelSelectionParams,
+    deep_research: boolean = false
   ) => {
     const filePaths = page.filePaths;
     // Get type-specific instructions based on page_type
     const typeSpecificInstructions = getTypeSpecificInstructions(page.pageType);
 
+    if (deep_research) {
+      console.log(
+        `Generating Promt for title(${page.title}),type(${
+          page.pageType || "unknown"
+        })`
+      );
+      const promptContent = `You are an expert software architect and technical writer engaged in an **iterative deep research** process (Iteration N) to produce a detailed Markdown wiki page about **"${
+        page.title
+      }"**.
+
+Your goal is to integrate information from multiple source files, correlate their logic, and progressively refine previous findings to achieve a comprehensive technical understanding.
+ 
+
+${typeSpecificInstructions}  
+  
+### Deep Research Objectives
+- Perform in-depth code analysis of all provided files.
+- Identify and explain cross-file relationships, hidden dependencies, and architectural patterns.
+- Validate and, if necessary, correct prior assumptions or summaries.
+- Fill gaps, elaborate unclear areas, and expand on complex system interactions.
+- Preserve previous structure where appropriate; expand it with new insights.
+- This iteration must bring additional clarity and precision.
+
+### Relevant Source Files
+${filePaths.map((path) => `- [${path}](${generateFileUrl(path)})`).join("\n")}
+
+### Output Requirements
+- Begin with \`<details>\` block listing the files (as above), then \`# ${
+        page.title
+      }\`.
+- Use logical sectioning (##, ###) to organize topics.
+- Include diagrams where helpful:
+  - Use \`graph TD\` or valid \`sequenceDiagram\` syntax.
+  - Prefer smaller, accurate diagrams over complex ones.
+- Cite filenames and line numbers for every claim.
+- Avoid conclusions; this process continues iteratively.
+- Write in clear, professional ${getLanguageName(language)}.
+
+At the end, include:
+## Research Evaluation
+Summarize what this iteration clarified and what areas need further investigation.
+
+Focus on depth, accuracy, and code-grounded insights.
+`;
+
+      return promptContent;
+    }
+
     // Create the prompt content - simplified to avoid message dialogs
-    const promptContent = `You are an expert technical writer and software architect.
-Your task is to generate a comprehensive and accurate technical wiki page in Markdown format about a specific feature, system, or module within a given software project.
+    const promptContent = `
+You are an expert technical writer documenting **"${
+      page.title
+    }"** for a software project.  
+Use the provided source files as your only source of truth.
+
+### Relevant Files
+${filePaths.map((path) => `- [${path}](${generateFileUrl(path)})`).join("\n")}
 
 ${typeSpecificInstructions}
 
-You will be given:
-1. The "[WIKI_PAGE_TOPIC]" for the page you need to create.
-2. A list of "[RELEVANT_SOURCE_FILES]" from the project that you MUST use as the sole basis for the content. You have access to the full content of these files. You MUST use AT LEAST 5 relevant source files for comprehensive coverage - if fewer are provided, search for additional related files in the codebase.
+Start with a \`<details>\` block listing these files, then a top-level heading \`# ${
+      page.title
+    }\`.
+
+### Write the following sections
+1. **Introduction:** Purpose and context.
+2. **Architecture and Components:** Logical explanation using H2/H3 sections.
+3. **Visuals:** Use valid Mermaid diagrams (\`graph TD\`, \`sequenceDiagram\`) to show relationships.
+4. **Tables:** Summarize key parameters or data models.
+5. **Code Snippets:** Include short, relevant examples.
+6. **Citations:** Every paragraph or diagram must cite relevant file(s) and line numbers.
+7. **Conclusion:** Optional brief summary.
+
+Ensure accuracy, clarity, and completeness.  
+Write in ${getLanguageName(language)} and maintain professional tone.
+Ensure that all content is Markdown compatible.
 
 CRITICAL STARTING INSTRUCTION:
 The very first thing on the page MUST be a \`<details>\` block listing ALL the \`[RELEVANT_SOURCE_FILES]\` you used to generate the content. There MUST be AT LEAST 5 source files listed - if fewer were provided, you MUST find additional related files to include.
@@ -1370,209 +1504,237 @@ Format it exactly like this:
 <summary>Relevant source files</summary>
 
 Remember, do not provide any acknowledgements, disclaimers, apologies, or any other preface before the \`<details>\` block. JUST START with the \`<details>\` block.
-The following files were used as context for generating this wiki page:
-
-${filePaths.map((path) => `- [${path}](${generateFileUrl(path)})`).join("\n")}
-<!-- Add additional relevant files if fewer than 5 were provided -->
-</details>
-
-Immediately after the \`<details>\` block, the main title of the page should be a H1 Markdown heading: \`# ${
-      page.title
-    }\`.
-
-Based ONLY on the content of the \`[RELEVANT_SOURCE_FILES]\`:
-
-1.  **Introduction:** Start with a concise introduction (1-2 paragraphs) explaining the purpose, scope, and high-level overview of "${
-      page.title
-    }" within the context of the overall project. If relevant, and if information is available in the provided files, link to other potential wiki pages using the format \`[Link Text](#page-anchor-or-id)\`.
-
-2.  **Detailed Sections:** Break down "${
-      page.title
-    }" into logical sections using H2 (\`##\`) and H3 (\`###\`) Markdown headings. For each section:
-    *   Explain the architecture, components, data flow, or logic relevant to the section's focus, as evidenced in the source files.
-    *   Identify key functions, classes, data structures, API endpoints, or configuration elements pertinent to that section.
-
-3. **Mermaid Diagrams with Validation:**  
-   * EXTENSIVELY use Mermaid diagrams (e.g., \`flowchart TD\`, \`sequenceDiagram\`, \`classDiagram\`, \`erDiagram\`, \`graph TD\`) to visually represent architectures, flows, relationships, and schemas found in the source files.  
-   * Before including any diagram, verify it follows these rules:  
-     - Use "graph TD" (top-down) directive ONLY  
-     - Node labels must be 3-4 words maximum  
-     - No special characters in node IDs (use alphanumeric only)  
-     - Proper arrow syntax: --> for connections  
-     - NO HTML comments or validation markers in diagram code  
-     - Avoid duplicate node definitions on the same line  
-     - Each node should be defined only once before being referenced  
-     - If diagram is complex, break into multiple simpler diagrams  
-     - Test syntax: each diagram must be parseable by Mermaid.js
-    *   Ensure diagrams are accurate and directly derived from information in the \`[RELEVANT_SOURCE_FILES]\`.
-    *   Provide a brief explanation before or after each diagram to give context.
-    *   CRITICAL: All diagrams MUST follow strict vertical orientation:
-       - Use "graph TD" (top-down) directive for flow diagrams
-       - NEVER use "graph LR" (left-right)
-       - Maximum node width should be 3-4 words
-       - For sequence diagrams:
-         - Start with "sequenceDiagram" directive on its own line
-         - Define ALL participants at the beginning using "participant" keyword
-         - Optionally specify participant types: actor, boundary, control, entity, database, collections, queue
-         - Use descriptive but concise participant names, or use aliases: "participant A as Alice"
-         - Use the correct Mermaid arrow syntax (8 types available):
-           - -> solid line without arrow (rarely used)
-           - --> dotted line without arrow (rarely used)
-           - ->> solid line with arrowhead (most common for requests/calls)
-           - -->> dotted line with arrowhead (most common for responses/returns)
-           - ->x solid line with X at end (failed/error message)
-           - -->x dotted line with X at end (failed/error response)
-           - -) solid line with open arrow (async message, fire-and-forget)
-           - --) dotted line with open arrow (async response)
-           - Examples: A->>B: Request, B-->>A: Response, A->xB: Error, A-)B: Async event
-         - Use +/- suffix for activation boxes: A->>+B: Start (activates B), B-->>-A: End (deactivates B)
-         - Group related participants using "box": box GroupName ... end
-         - Use structural elements for complex flows:
-           - loop LoopText ... end (for iterations)
-           - alt ConditionText ... else ... end (for conditionals)
-           - opt OptionalText ... end (for optional flows)
-           - par ParallelText ... and ... end (for parallel actions)
-           - critical CriticalText ... option ... end (for critical regions)
-           - break BreakText ... end (for breaking flows/exceptions)
-         - Add notes for clarification: "Note over A,B: Description", "Note right of A: Detail"
-         - Use autonumber directive to add sequence numbers to messages
-         - NEVER use flowchart-style labels like A--|label|-->B. Always use a colon for labels: A->>B: My Label
-
-4.  **Tables:**
-    *   Use Markdown tables to summarize information such as:
-        *   Key features or components and their descriptions.
-        *   API endpoint parameters, types, and descriptions.
-        *   Configuration options, their types, and default values.
-        *   Data model fields, types, constraints, and descriptions.
-
-5.  **Code Snippets (ENTIRELY OPTIONAL):**
-    *   Include short, relevant code snippets (e.g., Python, Java, JavaScript, SQL, JSON, YAML) directly from the \`[RELEVANT_SOURCE_FILES]\` to illustrate key implementation details, data structures, or configurations.
-    *   Ensure snippets are well-formatted within Markdown code blocks with appropriate language identifiers.
-
-6.  **Source Citations (EXTREMELY IMPORTANT):**
-    *   For EVERY piece of significant information, explanation, diagram, table entry, or code snippet, you MUST cite the specific source file(s) and relevant line numbers from which the information was derived.
-    *   Place citations at the end of the paragraph, under the diagram/table, or after the code snippet.
-    *   Use the exact format: \`Sources: <ul class="src-list"><li>[filename.ext:start_line-end_line]()</li></ul>\` for a range, or \`Sources: <ul class="src-list"><li>[filename.ext:line_number]()</li></ul>\` for a single line. Multiple files can be cited: \`Sources:<ul class="src-list"><li> [file1.ext:1-10]()</li><li>[file2.ext:5]()</li><li>[dir/file3.ext]()</li></ul>\` (if the whole file is relevant and line numbers are not applicable or too broad). 
-    *   If an entire section is overwhelmingly based on one or two files, you can cite them under the section heading in addition to more specific citations within the section.
-    *   IMPORTANT: You MUST cite AT LEAST 5 different source files throughout the wiki page to ensure comprehensive coverage.   
-
-7.  **Technical Accuracy:** All information must be derived SOLELY from the \`[RELEVANT_SOURCE_FILES]\`. Do not infer, invent, or use external knowledge about similar systems or common practices unless it's directly supported by the provided code. If information is not present in the provided files, do not include it or explicitly state its absence if crucial to the topic.
-
-8.  **Clarity and Conciseness:** Use clear, professional, and concise technical language suitable for other developers working on or learning about the project. Avoid unnecessary jargon, but use correct technical terms where appropriate.
-
-9.  **Conclusion/Summary:** End with a brief summary paragraph if appropriate for "${
-      page.title
-    }", reiterating the key aspects covered and their significance within the project.
-
-IMPORTANT: Generate the content in ${
-      language === "en"
-        ? "English"
-        : language === "ja"
-        ? "Japanese (日本語)"
-        : language === "zh"
-        ? "Mandarin Chinese (中文)"
-        : language === "zh-tw"
-        ? "Traditional Chinese (繁體中文)"
-        : language === "es"
-        ? "Spanish (Español)"
-        : language === "kr"
-        ? "Korean (한국어)"
-        : language === "vi"
-        ? "Vietnamese (Tiếng Việt)"
-        : language === "pt-br"
-        ? "Brazilian Portuguese (Português Brasileiro)"
-        : language === "fr"
-        ? "Français (French)"
-        : language === "ru"
-        ? "Русский (Russian)"
-        : "English"
-    } language.
-
-Remember:
-- Ground every claim in the provided source files.
-- Prioritize accuracy and direct representation of the code's functionality and structure.
-- Structure the document logically for easy understanding by other developers.
 `;
     return promptContent;
   };
 
-  // Generate content for a wiki page
-  const generatePageContent = useCallback(
+  const highlightContext = (
+    content: string,
+    match: string,
+    contextLength = 30
+  ) => {
+    const index = content.indexOf(match);
+    if (index === -1) return null;
+
+    const start = Math.max(0, index - contextLength);
+    const end = Math.min(content.length, index + match.length + contextLength);
+    const before = content.slice(start, index);
+    const after = content.slice(index + match.length, end);
+
+    // Highlight match with brackets for visibility
+    return `${before}[${match}]${after}`;
+  };
+
+  const checkIfResearchComplete = (content: string): boolean => {
+    // Helper to log match location
+    const logMatch = (match: string) => {
+      const snippet = highlightContext(content, match);
+      if (snippet) {
+        console.log(
+          `Found phrase: '${match}' at index ${content.indexOf(match)}`
+        );
+        console.log(`Context: ...${snippet}...`);
+      } else {
+        console.log(`Match '${match}' found, but could not extract context`);
+      }
+    };
+
+    // Check for explicit final conclusion markers
+    if (content.includes("## Final Conclusion")) {
+      logMatch("## Final Conclusion");
+      return true;
+    }
+
+    // Check for conclusion sections that don't indicate further research
+    if (
+      (content.includes("## Conclusion") || content.includes("## Summary")) &&
+      !content.includes("I will now proceed to") &&
+      !content.includes("Next Steps") &&
+      !content.includes("next iteration")
+    ) {
+      const match = content.includes("## Conclusion")
+        ? "## Conclusion"
+        : "## Summary";
+      logMatch(match);
+      return true;
+    }
+
+    // Check for phrases that explicitly indicate completion
+    const phrases = [
+      "This concludes our research",
+      "This completes our investigation",
+      "This concludes the deep research process",
+      "Key Findings and Implementation Details",
+      "In conclusion,",
+    ];
+
+    for (const phrase of phrases) {
+      if (content.includes(phrase)) {
+        logMatch(phrase);
+        return true;
+      }
+    }
+
+    // Combined check for "Final" + "Conclusion" appearing together
+    if (content.includes("Final") && content.includes("Conclusion")) {
+      logMatch("Final");
+      logMatch("Conclusion");
+      return true;
+    }
+
+    return false;
+  };
+
+  /**
+   * Attempts to fetch chat stream data via HTTP POST as a fallback mechanism
+   * @param body - The request payload to be sent to the chat stream API
+   * @param page - The WikiPage object containing page information
+   * @returns Promise<string> - Returns the response text if successful, or error message if failed
+   * @throws Will throw an error if the HTTP response is not OK (status >= 400)
+   *
+   * @example
+   * const result = await fallbackToHttp({
+   *   message: "Hello"
+   * }, wikiPage);
+   */
+  const fallbackToHttp = async (body: any, page: WikiPage): Promise<string> => {
+    try {
+      const response = await fetch(`/api/chat/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text().catch(() => "Unknown error");
+        throw new Error(`HTTP ${response.status}: ${errText}`);
+      }
+
+      // Read entire response body as text
+      const text = await response.text();
+      return text; // ✅ return the content
+    } catch (err) {
+      console.error("HTTP fallback failed:", err);
+      return `Error: ${(err as Error).message}`;
+    }
+  };
+
+  /**
+   * Resets and cleans up all state variables associated with a specific page generation process.
+   *
+   * @param pageId - The unique identifier of the page to cleanup state for
+   *
+   * This function:
+   * - Removes the page from active content requests tracking
+   * - Removes the page from the in-progress pages Set
+   * - Clears loading message
+   * - Resets current generating page ID
+   * - Resets page start time
+   * - Resets text received counter
+   * - Resets elapsed time
+   */
+  const cleanupPageState = (pageId: string) => {
+    activeContentRequests.delete(pageId);
+    setPagesInProgress((prev) => {
+      const next = new Set(prev);
+      next.delete(pageId);
+      return next;
+    });
+    setLoadingMessage(undefined);
+    setCurrentGeneratingPageId(null);
+    setPageStartTime(null);
+    setPageTextReceivedCount(0);
+    setPageElapsedTime(0);
+  };
+
+  /**
+   * Continues the research process for a specific wiki page using WebSocket communication with fallback to HTTP.
+   *
+   * @param pageId - The unique identifier of the wiki page to continue research on
+   * @param currentContent - The current content of the wiki page
+   * @param params - Optional model selection parameters for the research
+   * @param params.provider - The AI provider to use
+   * @param params.model - The AI model to use
+   * @param params.isCustomModel - Flag indicating if using a custom model
+   * @param params.customModel - Custom model configuration
+   *
+   * @remarks
+   * This function handles the deep research process by:
+   * - Checking if research should continue based on enabled state and iteration limits
+   * - Managing WebSocket connection for streaming responses
+   * - Handling connection errors with HTTP fallback
+   * - Processing incoming messages and updating page content
+   * - Managing research iterations and completion state
+   * - Cleaning up resources after completion
+   *
+   * The function will automatically continue research until either:
+   * - Maximum iterations are reached
+   * - Research is marked as complete
+   * - An error occurs that cannot be recovered from
+   *
+   * @throws Will log errors if WebSocket connection fails or if HTTP fallback fails
+   *
+   * @returns Promise<void>
+   */
+  const continuePageResearch = useCallback(
     async (
-      page: WikiPage,
-      owner: string,
-      repo: string,
-      params?: ModelSelectionParams,
-      promptOverride?: string,
-      force: boolean = false
-    ) => {
+      pageId: string,
+      // currentContent: string,
+      params: ModelSelectionParams
+    ): Promise<void> => {
       return new Promise<void>(async (resolve) => {
         try {
-          // Skip if content already exists
-          if (!force && generatedPages[page.id]?.content) {
-            console.log(page.id, "content already exists. Skiping...");
-            resolve();
-            return;
-          }
+          const currentIter = currentIterationRef.current;
+          const isComplete = researchCompleteRef.current;
+          const latestHistory = conversationHistoryRef.current[pageId] || [];
 
-          // Skip if this page is already being processed
-          // Use a synchronized pattern to avoid race conditions
-          if (activeContentRequests.get(page.id)) {
+          if (
+            !deepResearchEnabled ||
+            isComplete ||
+            currentIter >= maxIterations
+          ) {
             console.log(
-              `Page ${page.id} (${page.title}) is already being processed, skipping duplicate call`
+              `continuePageResearch: Exiting: deepResearchEnabled:${deepResearchEnabled}, isComplete: ${isComplete}, (${currentIter} >= ${maxIterations}): ${
+                currentIter >= maxIterations
+              }`
             );
             resolve();
             return;
           }
 
-          // Mark this page as being processed immediately to prevent race conditions
-          // This ensures that if multiple calls happen nearly simultaneously, only one proceeds
-          activeContentRequests.set(page.id, true);
+          await new Promise((r) => setTimeout(r, 2000));
 
-          // Validate repo info
-          if (!owner || !repo) {
-            throw new Error(
-              "Invalid repository information. Owner and repo name are required."
+          setIsLoading(true);
+          setLoadingMessage(undefined);
+          // setLoadingMessage("Continuing deep research...");
+
+          const page = wikiStructure?.pages.find((p) => p.id === pageId);
+          if (!page) {
+            console.error(
+              `continuePageResearch: Exiting: Page ${pageId} not Found. deepResearchEnabled:${deepResearchEnabled}, researchComplete: ${isComplete}, currentIteration: ${currentIter}, maxIterations: ${maxIterations}`
             );
+
+            setIsLoading(false);
+            setLoadingMessage(undefined);
+            resolve();
+            return;
           }
 
-          const pageStartTime = Date.now();
-          let pageTokenCount = 0;
+          const newHistory: Message[] = [
+            ...latestHistory,
+            { role: "user", content: "[DEEP RESEARCH] Continue the research" },
+          ];
 
-          // Mark page as in progress
-          setPagesInProgress((prev) => new Set(prev).add(page.id));
-          // Don't set loading message for individual pages during queue processing
+          console.log(
+            `continuePageResearch: pageId:${pageId}: currentIteration:${currentIter}, pageConversationHistory:${latestHistory.length}, newHistory:${newHistory.length},  `
+          );
 
-          // const filePaths = page.filePaths;
-
-          // Store the initially generated content BEFORE rendering/potential modification
-          setGeneratedPages((prev) => ({
-            ...prev,
-            [page.id]: { ...page, content: "Loading..." }, // Placeholder
-          }));
-          setOriginalMarkdown((prev) => ({ ...prev, [page.id]: "" })); // Clear previous original
-
-          // Make API call to generate page content
-          console.log(`Starting content generation for page: ${page.title}`);
-
-          setLoadingMessage(`Generating content for page: ${page.title}`);
-
-          // Get repository URL
-          const repoUrl = getRepoUrl(effectiveRepoInfo);
-          const promptContent =
-            promptOverride ?? buildPageGenerationPrompt(page, params);
-
-          // Prepare request body
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const requestBody: Record<string, any> = {
-            repo_url: repoUrl,
+          const requestBody: ChatCompletionRequest = {
+            repo_url: getRepoUrl(effectiveRepoInfo),
             type: effectiveRepoInfo.type,
-            messages: [
-              {
-                role: "user",
-                content: promptContent,
-              },
-            ],
+            messages: newHistory,
+            deep_research: true,
+            max_iterations: maxIterations,
           };
 
           const finalProvider = params?.provider ?? selectedProviderState;
@@ -1581,238 +1743,449 @@ Remember:
             params?.isCustomModel ?? isCustomSelectedModelState;
           const finalCustomModel =
             params?.customModel ?? customSelectedModelState;
-          // const isComprehensiveView = params?.isComprehensiveView ?? isComprehensiveViewState;
-          const finalExcludedDirs = params?.excludedDirs ?? modelExcludedDirs;
-          const finalExcludedFiles =
-            params?.excludedFiles ?? modelExcludedFiles;
-          const finalIncludedDirs = params?.includedDirs ?? modelIncludedDirs;
-          const finalIncludedFiles =
-            params?.includedFiles ?? modelIncludedFiles;
-          const finalToken = params?.token ?? currentToken;
-          // const authCode = params?.authCode ?? authCodeState;
 
-          // Add tokens if available
           addTokensToRequestBody(
             requestBody,
-            finalToken,
+            currentToken,
             effectiveRepoInfo.type,
             finalProvider,
             finalModel,
             finalIsCustomModel,
             finalCustomModel,
             language,
-            finalExcludedDirs,
-            finalExcludedFiles,
-            finalIncludedDirs,
-            finalIncludedFiles
+            modelExcludedDirs,
+            modelExcludedFiles,
+            modelIncludedDirs,
+            modelIncludedFiles
           );
+
+          let content = "";
+          const pageStartTime = Date.now();
+          let pageTokenCount = 0;
+          let finished = false;
+
           setCurrentGeneratingPageId(page.id);
-          setPageStartTime(Date.now());
+          setPageStartTime(pageStartTime);
           setPageTextReceivedCount(0);
           setPageElapsedTime(0);
 
-          //console.log(requestBody);
+          const finalize = (
+            currentIterationContent: string,
+            allIterationsContent: string
+          ) => {
+            const timeTaken = Math.floor((Date.now() - pageStartTime) / 1000);
 
-          // Use WebSocket for communication
-          let content = "";
-          let requestStartTime = Date.now();
-
-          try {
-            // Create WebSocket URL from the server base URL
-            const serverBaseUrl =
-              process.env.NEXT_PUBLIC_SERVER_BASE_URL ||
-              "http://localhost:8001";
-            const wsBaseUrl = serverBaseUrl.replace(/^http/, "ws")
-              ? serverBaseUrl.replace(/^https/, "wss")
-              : serverBaseUrl.replace(/^http/, "ws");
-            const wsUrl = `${wsBaseUrl}/ws/chat`;
-
-            // Create a new WebSocket connection
-            const ws = new WebSocket(wsUrl);
-
-            // Create a promise that resolves when the WebSocket connection is complete
-            await new Promise<void>((resolve, reject) => {
-              // Set up event handlers
-              ws.onopen = () => {
-                console.log(
-                  `WebSocket connection established for page: ${page.title}`
-                );
-                // Send the request as JSON
-                ws.send(JSON.stringify(requestBody));
-                resolve();
-              };
-
-              ws.onerror = (error) => {
-                console.error("WebSocket error:", error);
-                reject(new Error("WebSocket connection failed"));
-              };
-
-              // If the connection doesn't open within 5 seconds, fall back to HTTP
-              const timeout = setTimeout(() => {
-                reject(new Error("WebSocket connection timeout"));
-              }, 5000);
-
-              // Clear the timeout if the connection opens successfully
-              ws.onopen = () => {
-                clearTimeout(timeout);
-                console.log(
-                  `WebSocket connection established for page: ${page.title}`
-                );
-                // Send the request as JSON
-                ws.send(JSON.stringify(requestBody));
-                resolve();
-              };
+            // Log only the current iteration
+            addPromptLog({
+              source: `DeepResearch-PageContent-it(${currentIterationRef.current})`,
+              prompt: requestBody.messages
+                .map((m) => `${m.role}: ${m.content}`)
+                .join("\n\n"),
+              response: currentIterationContent, // Only current iteration
+              timestamp: Date.now(),
+              model: `${finalProvider}/${
+                finalIsCustomModel ? finalCustomModel : finalModel
+              }`,
+              timeTaken,
             });
 
-            // Create a promise that resolves when the WebSocket response is complete
-            await new Promise<void>((resolve, reject) => {
-              // Handle incoming messages
-              ws.onmessage = (event) => {
-                content += event.data;
-                pageTokenCount += event.data.length;
-                setPageTextReceivedCount((prev) => prev + event.data.length);
-              };
+            // Store all iterations in the page
+            setGeneratedPages((prev) => ({
+              ...prev,
+              [pageId]: { ...page, content: allIterationsContent }, // All iterations
+            }));
 
-              // Handle WebSocket close
-              ws.onclose = () => {
-                console.log(
-                  `WebSocket connection closed for page: ${page.title}`
-                );
-                addPromptLog({
-                  source: "PageContent",
-                  prompt: requestBody.messages
-                    .map((m) => `${m.role}: ${m.content}`)
-                    .join("\n\n"),
-                  response: content, // variable holding the generated page markdown
-                  timestamp: Date.now(),
-                  model: `${finalProvider}/${
-                    finalIsCustomModel ? finalCustomModel : finalModel
-                  }`,
-                  timeTaken: (Date.now() - requestStartTime) / 1000,
-                });
+            setPageConversationHistory((prev) => ({
+              ...prev,
+              [pageId]: [
+                ...newHistory,
+                { role: "assistant", content: currentIterationContent }, // Current iteration
+              ],
+            }));
 
-                resolve();
-              };
+            console.log(
+              `Updated pageConversationHistory: ${
+                (conversationHistoryRef.current[pageId] || []).length
+              }`
+            );
 
-              // Handle WebSocket errors
-              ws.onerror = (error) => {
-                console.error(
-                  "WebSocket error during message reception:",
-                  error
-                );
-                reject(new Error("WebSocket error during message reception"));
-              };
-            });
-          } catch (wsError) {
-            console.error("WebSocket error, falling back to HTTP:", wsError);
-
-            // Fall back to HTTP if WebSocket fails
-            const response = await fetch(`/api/chat/stream`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
+            setPageAnalytics((prev) => ({
+              ...prev,
+              [pageId]: {
+                model: finalModel,
+                provider: finalProvider,
+                tokensReceived: pageTokenCount,
+                timeTaken,
               },
-              body: JSON.stringify(requestBody),
-            });
+            }));
 
-            if (!response.ok) {
-              const errorText = await response
-                .text()
-                .catch(() => "No error details available");
-              console.error(`API error (${response.status}): ${errorText}`);
-              throw new Error(
-                `Error generating page content: ${response.status} - ${response.statusText}`
-              );
-            }
+            setIsLoading(false);
+            setLoadingMessage(undefined);
+            cleanupPageState(pageId);
+            resolve();
+          };
 
-            // Process the response
-            content = "";
-            const reader = response.body?.getReader();
-            const decoder = new TextDecoder();
-
-            if (!reader) {
-              throw new Error("Failed to get response reader");
-            }
-
+          const handleMessage = (data: string) => {
             try {
-              while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                content += decoder.decode(value, { stream: true });
+              const parsed = JSON.parse(data);
+              if (parsed.type === "iteration_status") {
+                setCurrentIteration(parsed.current_iteration || 0);
+                console.log(
+                  `Research iteration ${parsed.current_iteration} ${
+                    parsed.status || "in_progress"
+                  }`
+                );
+              } else if (parsed.type === "llm_prompt") {
+                let actualPrompt = parsed.content;
               }
-              // Ensure final decoding
-              content += decoder.decode();
-            } catch (readError) {
-              console.error("Error reading stream:", readError);
-              throw new Error("Error processing response stream");
+              // If JSON, then the recieved data is control data and not to be included in the text
+              return;
+            } catch {}
+            pageTokenCount += data.length;
+            setPageTextReceivedCount(pageTokenCount);
+            setPageElapsedTime(Math.floor((Date.now() - pageStartTime) / 1000));
+            content += data;
+          };
+
+          const handleError = async (err: Event) => {
+            console.error("WebSocket error, fallback to HTTP:", err);
+            if (!finished) {
+              finished = true;
+              setLoadingMessage("Error: Falling back to HTTP...");
+              const fallbackContent =
+                (await fallbackToHttp(requestBody, page)) || "";
+              finalize(fallbackContent, fallbackContent);
             }
+          };
+
+          const handleClose = () => {
+            if (finished) return;
+            finished = true;
+
+            const latestIter = currentIterationRef.current;
+            const isComplete = false; // checkIfResearchComplete(content);
+            const forceComplete = latestIter >= maxIterations;
+
+            let allIterationsContent = content; // Default to current iteration content
+
+            // if (forceComplete && !isComplete) {
+            //   content +=
+            //     "\n\n## Final Conclusion\nAfter multiple iterations, sufficient insights were gathered.";
+            // }
+            if (forceComplete || isComplete) {
+              // Get all previous iterations
+              const previousResponses = (
+                conversationHistoryRef.current[pageId] || []
+              )
+                .filter((msg) => msg.role === "assistant")
+                .map((msg, idx) => `### Iteration ${idx + 1}\n${msg.content}`)
+                .join("\n\n");
+
+              // Add current iteration  
+              const currentResponse = `### Iteration ${latestIter}\n${content}`;  
+                
+              // Combine all iterations  
+              allIterationsContent = previousResponses   
+                ? `${previousResponses}\n\n${currentResponse}`   
+                : currentResponse; 
+            }
+
+            finalize(content, allIterationsContent);
+
+            if (forceComplete || isComplete) {
+              setResearchComplete(true);
+              setCurrentIteration(0);
+              console.log(`Stopping `);
+            } else {
+              // setLoadingMessage("Continuing next research iteration...");
+              setTimeout(() => continuePageResearch(pageId, params), 2000);
+              resolve();
+            }
+          };
+
+          await createChatWebSocket(
+            requestBody,
+            handleMessage,
+            handleError,
+            handleClose
+          );
+        } catch (err) {
+          console.error("continuePageResearch error:", err);
+          setIsLoading(false);
+          setLoadingMessage(undefined);
+          resolve();
+        }
+      });
+    },
+    [
+      deepResearchEnabled,
+      maxIterations,
+      wikiStructure,
+      effectiveRepoInfo,
+      selectedProviderState,
+      selectedModelState,
+      isCustomSelectedModelState,
+      customSelectedModelState,
+      currentToken,
+      modelExcludedDirs,
+      modelExcludedFiles,
+      modelIncludedDirs,
+      modelIncludedFiles,
+      language,
+      fallbackToHttp,
+      addPromptLog,
+      checkIfResearchComplete,
+      setIsLoading,
+    ]
+  );
+
+  /**
+   * Generates content for a wiki page using either WebSocket or HTTP fallback.
+   *
+   * @param page - The wiki page object to generate content for
+   * @param owner - Repository owner name
+   * @param repo - Repository name
+   * @param params - Optional model selection parameters
+   * @param promptOverride - Optional custom prompt to override default
+   * @param force - Whether to force regenerate content even if it exists
+   * @param deep_research - Whether to perform deep research with multiple iterations
+   * @param max_iterations - Maximum number of research iterations
+   *
+   * @remarks
+   * This function handles the generation of wiki page content by:
+   * - Setting up WebSocket connection for streaming responses
+   * - Managing state for pages in progress
+   * - Handling content generation through iterations
+   * - Falling back to HTTP if WebSocket fails
+   * - Tracking analytics like tokens and time taken
+   * - Managing research continuation for deep research mode
+   *
+   * @throws Will log error if repository info is missing
+   *
+   * @returns void
+   */
+  const generatePageContent = useCallback(
+    async (
+      page: WikiPage,
+      owner: string,
+      repo: string,
+      params?: ModelSelectionParams,
+      promptOverride?: string,
+      force: boolean = false,
+      deep_research: boolean = false,
+      max_iterations: number = 5
+    ): Promise<void> => {
+      return new Promise<void>(async (resolve) => {
+        try {
+          // Validate repo info
+          if (!owner || !repo) {
+            console.error(
+              "Invalid repository information. Owner and repo name are required."
+            );
+            resolve();
+            return;
           }
 
-          // addPromptLog({
-          //   source: 'PageContent',
-          //   prompt: requestBody.messages.map(m => `${m.role}: ${m.content}`).join('\n\n'),
-          //   response: content, // variable holding the generated page markdown
-          //   timestamp: Date.now(),
-          // });
+          if (!force && generatedPages[page.id]?.content) {
+            console.log(`${page.title} already generated, skipping.`);
+            resolve();
+            return;
+          }
 
-          // Clean up markdown delimiters
-          content = content
-            .replace(/^```markdown\s*/i, "")
-            .replace(/```\s*$/i, "");
+          if (activeContentRequests.get(page.id)) {
+            console.log(
+              `${page.title} already processing, skipping duplicate.`
+            );
+            resolve();
+            return;
+          }
 
-          console.log(
-            `Received content for ${page.title}, length: ${content.length} characters`
-          );
+          // 🚀 Initial state setup
+          activeContentRequests.set(page.id, true);
+          setPagesInProgress((prev) => new Set(prev).add(page.id));
 
-          // Store the FINAL generated content
-          const updatedPage = { ...page, content };
-          setGeneratedPages((prev) => ({ ...prev, [page.id]: updatedPage }));
-          // Store this as the original for potential mermaid retries
-          setOriginalMarkdown((prev) => ({ ...prev, [page.id]: content }));
-
-          const timeTaken = Math.floor((Date.now() - pageStartTime) / 1000);
-          setPageAnalytics((prev) => ({
-            ...prev,
-            [page.id]: {
-              model: selectedModelState || "default",
-              provider: selectedProviderState || "default",
-              tokensReceived: pageTokenCount,
-              timeTaken,
-            },
-          }));
-
-          resolve();
-        } catch (err) {
-          console.error(`Error generating content for page ${page.id}:`, err);
-          const errorMessage =
-            err instanceof Error ? err.message : "Unknown error";
-          // Update page state to show error
           setGeneratedPages((prev) => ({
             ...prev,
-            [page.id]: {
-              ...page,
-              content: `Error generating content: ${errorMessage}`,
-            },
+            [page.id]: { ...page, content: "Loading..." },
           }));
-          setError(`Failed to generate content for ${page.title}.`);
-          resolve(); // Resolve even on error to unblock queue
-        } finally {
-          // Clear the processing flag for this page
-          // This must happen in the finally block to ensure the flag is cleared
-          // even if an error occurs during processing
-          activeContentRequests.delete(page.id);
+          setOriginalMarkdown((prev) => ({ ...prev, [page.id]: "" }));
 
-          // Mark page as done
-          setPagesInProgress((prev) => {
-            const next = new Set(prev);
-            next.delete(page.id);
-            return next;
-          });
-          setLoadingMessage(undefined); // Clear specific loading message
-          setCurrentGeneratingPageId(null);
-          setPageStartTime(null);
+          // ---- Initialize loading state ----
+          console.log(`Starting content generation for page: ${page.title}`);
+          setLoadingMessage(`Generating content for ${page.title}...`);
+
+          const repoUrl = getRepoUrl(effectiveRepoInfo);
+          const promptContent =
+            promptOverride ??
+            buildPageGenerationPrompt(page, params, deep_research);
+
+          const requestBody: ChatCompletionRequest = {
+            repo_url: repoUrl,
+            type: effectiveRepoInfo.type,
+            messages: [{ role: "user", content: promptContent }],
+            deep_research,
+            max_iterations,
+          };
+
+          const finalProvider = params?.provider ?? selectedProviderState;
+          const finalModel = params?.model ?? selectedModelState;
+          const finalIsCustomModel =
+            params?.isCustomModel ?? isCustomSelectedModelState;
+          const finalCustomModel =
+            params?.customModel ?? customSelectedModelState;
+
+          addTokensToRequestBody(
+            requestBody,
+            currentToken,
+            effectiveRepoInfo.type,
+            finalProvider,
+            finalModel,
+            finalIsCustomModel,
+            finalCustomModel,
+            language,
+            modelExcludedDirs,
+            modelExcludedFiles,
+            modelIncludedDirs,
+            modelIncludedFiles
+          );
+
+          let content = "";
+          let pageTokenCount = 0;
+          let latestIteration = latestIterationRef.current;
+
+          const requestStartTime = Date.now();
+          let finished = false;
+
+          setCurrentGeneratingPageId(page.id);
+          setPageStartTime(requestStartTime);
           setPageTextReceivedCount(0);
           setPageElapsedTime(0);
+
+          const handleMessage = (data: string) => {
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.type === "iteration_status") {
+                latestIteration = parsed.current_iteration || 0;
+                setCurrentIteration(latestIteration);
+                // setLoadingMessage(
+                //   `Research iteration ${latestIteration} in progress...`
+                // );
+              }
+              // If JSON, then the recieved data is control data and not to be included in the text
+              return;
+            } catch {}
+            content += data;
+            pageTokenCount += data.length;
+            setPageTextReceivedCount((prev) => prev + data.length);
+          };
+
+          const finalize = (finalContent: string) => {
+            let completedContent = finalContent;
+
+            if (deep_research) {
+              const isComplete = false; //checkIfResearchComplete(finalContent);
+              const forceComplete =
+                latestIterationRef.current >= max_iterations;
+
+              if (forceComplete && !isComplete) {
+                completedContent +=
+                  "\n\n## Final Conclusion\nAfter multiple iterations, we’ve reached sufficient insights.";
+              }
+
+              if (forceComplete || isComplete) {
+                setResearchComplete(true);
+                setCurrentIteration(0);
+                setLoadingMessage(undefined);
+                setIsLoading(false);
+              } else {
+                setLoadingMessage("Continuing next research iteration...");
+                setTimeout(() => {
+                  continuePageResearch(page.id, params || {});
+                }, 2000);
+              }
+            } else {
+              setCurrentIteration(0);
+              setLoadingMessage("Finalizing content...");
+              setTimeout(() => {
+                setIsLoading(false);
+                setLoadingMessage(undefined);
+              }, 600);
+            }
+
+            setGeneratedPages((prev) => ({
+              ...prev,
+              [page.id]: { ...page, content: completedContent },
+            }));
+
+            setPageConversationHistory((prev) => ({
+              ...prev,
+              [page.id]: [
+                ...(prev[page.id] || []),
+                { role: "assistant", content: finalContent },
+              ],
+            }));
+
+            setPageAnalytics((prev) => ({
+              ...prev,
+              [page.id]: {
+                model: finalModel,
+                provider: finalProvider,
+                tokensReceived: pageTokenCount,
+                timeTaken: Math.floor((Date.now() - requestStartTime) / 1000),
+              },
+            }));
+
+            addPromptLog({
+              source: deep_research
+                ? `DeepResearch-PageContent-it(${currentIterationRef.current})`
+                : "PageContent",
+              prompt: requestBody.messages
+                .map((m) => `${m.role}: ${m.content}`)
+                .join("\n\n"),
+              response: completedContent,
+              timestamp: Date.now(),
+              model: `${finalProvider}/${
+                finalIsCustomModel ? finalCustomModel : finalModel
+              }`,
+              timeTaken: (Date.now() - requestStartTime) / 1000,
+            });
+
+            cleanupPageState(page.id);
+            resolve();
+          };
+
+          const handleError = async (error: Event) => {
+            if (finished) return;
+            finished = true;
+            console.error("WebSocket error:", error);
+            setLoadingMessage("Error occurred. Falling back to HTTP...");
+            const fallbackContent = await fallbackToHttp(requestBody, page);
+            finalize(fallbackContent || "");
+          };
+
+          const handleClose = () => {
+            if (finished) return;
+            finished = true;
+            finalize(content);
+          };
+
+          try {
+            webSocketRef.current = await createChatWebSocket(
+              requestBody,
+              handleMessage,
+              handleError,
+              handleClose
+            );
+          } catch (err) {
+            console.error("Failed to create WebSocket:", err);
+            const fallbackContent = await fallbackToHttp(requestBody, page);
+            finalize(fallbackContent || "");
+          }
+        } catch (err) {
+          console.error("Error in generatePageContent:", err);
+          setIsLoading(false);
+          setLoadingMessage(undefined);
+          resolve();
         }
       });
     },
@@ -1826,17 +2199,32 @@ Remember:
       customSelectedModelState,
       modelExcludedDirs,
       modelExcludedFiles,
+      modelIncludedDirs,
+      modelIncludedFiles,
       language,
-      activeContentRequests,
-      generateFileUrl,
+      continuePageResearch,
+      addTokensToRequestBody,
+      fallbackToHttp,
+      addPromptLog,
+      getRepoUrl,
+      setGeneratedPages,
+      setPagesInProgress,
+      setCurrentIteration,
+      setResearchComplete,
+      setPageAnalytics,
+      checkIfResearchComplete,
+      pageConversationHistory,
     ]
   );
 
-  const refreshPage = useCallback((pageId: string) => {
-    setShowWikiTypeInModal(false);
-    setRefreshPageIdQueued(pageId);
-    setIsModelSelectionModalOpen(true);
-  }, []);
+  const refreshPage = useCallback(
+    (pageId: string) => {
+      setShowWikiTypeInModal(false);
+      setRefreshPageIdQueued(pageId);
+      setIsModelSelectionModalOpen(true);
+    },
+    [deepResearchEnabled, maxIterations]
+  );
 
   const performPageRefresh = useCallback(
     async (pageId: string, params: ModelSelectionParams, prompt: string) => {
@@ -1849,6 +2237,19 @@ Remember:
 
       // Reset cache loaded flag to allow auto-save after refresh
       cacheLoadedSuccessfully.current = false;
+
+      // Reset deep research state
+      setCurrentIteration(0);
+      setResearchComplete(false);
+      setPageConversationHistory((prev) => ({
+        ...prev,
+        [pageId]: [
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+      }));
 
       // Clear the existing content
       setGeneratedPages((prev) => ({
@@ -1874,7 +2275,9 @@ Remember:
           effectiveRepoInfo.repo,
           params,
           prompt,
-          true
+          true,
+          deepResearchEnabled,
+          maxIterations
         );
       } finally {
         setIsLoading(false);
@@ -1888,6 +2291,9 @@ Remember:
       selectedProviderState,
       selectedModelState,
       enablePromptEditing,
+      deepResearchEnabled,
+      maxIterations,
+      activeContentRequests,
     ]
   );
 
@@ -1900,7 +2306,7 @@ Remember:
       // const provider = params?.provider ?? selectedProviderState;
       // const model = params?.model ?? selectedModelState;
       // ...populate others as needed
-      let prompt = buildPageGenerationPrompt(page, params);
+      let prompt = buildPageGenerationPrompt(page, params, deepResearchEnabled);
 
       if (enablePromptEditing) {
         // Show the modal for review/edit-- pause flow!
@@ -1916,7 +2322,9 @@ Remember:
           prompt = await showPromptEditModal(
             prompt,
             model_to_use,
-            `Page Content Generation Prompt for ${page.title}`
+            `${
+              deepResearchEnabled ? "Deep Research" : ""
+            } Page Content Generation Prompt for ${page.title}`
           );
         } catch (err) {
           console.log(err);
@@ -1932,6 +2340,9 @@ Remember:
       selectedProviderState,
       selectedModelState,
       enablePromptEditing,
+      performPageRefresh,
+      deepResearchEnabled,
+      maxIterations,
     ]
   );
 
@@ -2220,7 +2631,7 @@ Remember:
 
         // Prepare request body
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const requestBody: Record<string, any> = {
+        const requestBody: ChatCompletionRequest = {
           repo_url: repoUrl,
           type: effectiveRepoInfo.type,
           messages: [
@@ -3824,25 +4235,65 @@ Remember:
       <main className="flex-1 max-w-[90%] xl:max-w-[1400px] mx-auto overflow-y-auto">
         {isLoading ? (
           <div className="flex flex-col items-center justify-center p-8 bg-[var(--card-bg)] rounded-lg shadow-custom card-japanese">
-            <div className="relative mb-6">
-              <div className="absolute -inset-4 bg-[var(--accent-primary)]/10 rounded-full blur-md animate-pulse"></div>
-              <div className="relative flex items-center justify-center">
-                <div className="w-3 h-3 bg-[var(--accent-primary)]/70 rounded-full animate-pulse"></div>
-                <div className="w-3 h-3 bg-[var(--accent-primary)]/70 rounded-full animate-pulse delay-75 mx-2"></div>
-                <div className="w-3 h-3 bg-[var(--accent-primary)]/70 rounded-full animate-pulse delay-150"></div>
+            {!deepResearchEnabled && (
+              <div className="relative mb-6">
+                <div className="absolute -inset-4 bg-[var(--accent-primary)]/10 rounded-full blur-md animate-pulse"></div>
+                <div className="relative flex items-center justify-center">
+                  <div className="w-3 h-3 bg-[var(--accent-primary)]/70 rounded-full animate-pulse"></div>
+                  <div className="w-3 h-3 bg-[var(--accent-primary)]/70 rounded-full animate-pulse delay-75 mx-2"></div>
+                  <div className="w-3 h-3 bg-[var(--accent-primary)]/70 rounded-full animate-pulse delay-150"></div>
+                </div>
               </div>
-            </div>
+            )}
             <div className="text-[var(--foreground)] text-center font-serif">
               {/* {loadingMessage || messages.common?.loading || 'Loading...'} */}
 
-              <div
-                className="your-loading-message-class"
-                dangerouslySetInnerHTML={{
-                  __html: loadingMessage
-                    ? loadingMessage
-                    : messages.common?.loading || "Loading...",
-                }}
-              />
+              {!deepResearchEnabled && (
+                <div
+                  className="your-loading-message-class"
+                  dangerouslySetInnerHTML={{
+                    __html: loadingMessage
+                      ? loadingMessage
+                      : messages.common?.loading || "Loading...",
+                  }}
+                />
+              )}
+
+              {/* Deep Research iteration progress */}
+              {deepResearchEnabled && currentIteration > 0 && (
+                <div className="mt-4 p-3 bg-[var(--background)]/50 rounded-md border border-[var(--border-color)]">
+                  <div className="text-sm font-medium text-[var(--foreground)] mb-2">
+                    Deep Research Progress
+                  </div>
+                  <div className="text-xs text-[var(--muted)] space-y-2">
+                    <div>
+                      Iteration: {currentIteration} of {maxIterations}
+                    </div>
+                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                      <div
+                        className="bg-purple-600 h-2 rounded-full transition-all duration-300"
+                        style={{
+                          width: `${(currentIteration / maxIterations) * 100}%`,
+                        }}
+                      ></div>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <div className="animate-pulse flex space-x-1">
+                        <div className="h-2 w-2 bg-purple-600 rounded-full"></div>
+                        <div className="h-2 w-2 bg-purple-600 rounded-full"></div>
+                        <div className="h-2 w-2 bg-purple-600 rounded-full"></div>
+                      </div>
+                      <span>
+                        {currentIteration === 1
+                          ? "Planning research approach..."
+                          : currentIteration < maxIterations
+                          ? `Research iteration ${currentIteration} in progress...`
+                          : "Finalizing comprehensive analysis..."}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {isExporting &&
                 (messages.loading?.preparingDownload ||
@@ -3888,6 +4339,17 @@ Remember:
                       let emoji = "";
                       let pageNameClass = "";
                       if (
+                        deepResearchEnabled &&
+                        page.id === currentGeneratingPageId
+                      ) {
+                        emoji = (
+                          <span
+                            className="inline-block w-3.5 h-3.5 rounded-full bg-blue-500 animate-pulse"
+                            style={{ verticalAlign: "middle" }}
+                          ></span>
+                        );
+                        pageNameClass = "font-medium animate-pulse truncate";
+                      } else if (
                         generatedPages[page.id]?.content &&
                         generatedPages[page.id].content !== "Loading..."
                       ) {
@@ -4203,21 +4665,116 @@ Remember:
                     <h3 className="text-xl font-bold text-[var(--foreground)] mb-4 break-words font-serif">
                       {generatedPages[currentPageId].title}
                     </h3>
-                    <button
-                      onClick={() => refreshPage(currentPageId)}
-                      disabled={pagesInProgress.has(currentPageId)}
-                      className="flex items-center px-3 py-2 bg-[var(--accent-primary)] text-white rounded-md hover:bg-[var(--accent-primary)]/90 disabled:opacity-50 disabled:cursor-not-allowed border border-[var(--border-color)] transition-colors hover:cursor-pointer"
-                      title="Refresh this page"
-                    >
-                      <FaSync
-                        className={`mr-2 ${
-                          pagesInProgress.has(currentPageId)
-                            ? "animate-spin"
-                            : ""
-                        }`}
-                      />
-                      Refresh Page
-                    </button>
+
+                    <div className="flex items-center gap-2 mb-4">
+                      {/* Deep Research Toggle */}
+                      <div className="group relative">
+                        <label className="flex items-center cursor-pointer">
+                          <span className="text-xs text-gray-600 dark:text-gray-400 mr-2">
+                            Deep Research
+                          </span>
+                          <div className="relative">
+                            <input
+                              type="checkbox"
+                              checked={deepResearchEnabled}
+                              onChange={() =>
+                                setDeepResearchEnabled(!deepResearchEnabled)
+                              }
+                              className="sr-only"
+                            />
+                            <div
+                              className={`w-10 h-5 rounded-full transition-colors ${
+                                deepResearchEnabled
+                                  ? "bg-purple-600"
+                                  : "bg-gray-300 dark:bg-gray-600"
+                              }`}
+                            ></div>
+                            <div
+                              className={`absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white transition-transform transform ${
+                                deepResearchEnabled ? "translate-x-5" : ""
+                              }`}
+                            ></div>
+                          </div>
+                        </label>
+                        <div className="absolute bottom-full left-0 mb-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded p-2 w-72 z-10">
+                          <p className="mb-1">
+                            Deep Research conducts multi-iteration analysis for
+                            comprehensive page content
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Status indicator when Deep Research is active */}
+                      {deepResearchEnabled && (
+                        <div className="text-xs text-purple-600 dark:text-purple-400">
+                          <div className="flex items-center gap-2 mb-1">
+                            {/* Animated dot when in progress */}
+                            {currentIteration > 0 &&
+                              !researchComplete &&
+                              pagesInProgress.has(currentPageId) && (
+                                <div className="flex items-center gap-1">
+                                  <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse" />
+                                  <span className="animate-pulse">
+                                    Researching
+                                  </span>
+                                </div>
+                              )}
+                            <span>Multi-turn research</span>
+                            {currentIteration > 0 && (
+                              <>
+                                <span>•</span>
+                                <span className="font-medium">
+                                  {currentIteration}/5
+                                </span>
+                              </>
+                            )}
+                            {researchComplete && (
+                              <>
+                                <span>•</span>
+                                <span className="text-green-600 dark:text-green-400">
+                                  ✓ Complete
+                                </span>
+                              </>
+                            )}
+                          </div>
+
+                          {/* Progress bar */}
+                          {currentIteration > 0 && (
+                            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
+                              <div
+                                className={`h-1.5 rounded-full transition-all duration-300 ${
+                                  researchComplete
+                                    ? "bg-green-500"
+                                    : "bg-purple-500"
+                                }`}
+                                style={{
+                                  width: researchComplete
+                                    ? "100%"
+                                    : `${(currentIteration / 5) * 100}%`,
+                                }}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Refresh Page Button */}
+                      <button
+                        onClick={() => refreshPage(currentPageId)}
+                        disabled={pagesInProgress.has(currentPageId)}
+                        className="flex items-center px-3 py-2 bg-[var(--accent-primary)] text-white rounded-md hover:bg-[var(--accent-primary)]/90 disabled:opacity-50 disabled:cursor-not-allowed border border-[var(--border-color)] transition-colors hover:cursor-pointer"
+                        title="Refresh this page"
+                      >
+                        <FaSync
+                          className={`mr-2 ${
+                            pagesInProgress.has(currentPageId)
+                              ? "animate-spin"
+                              : ""
+                          }`}
+                        />
+                        Refresh Page
+                      </button>
+                    </div>
                   </div>
 
                   <div className="prose prose-sm md:prose-base lg:prose-lg max-w-none">

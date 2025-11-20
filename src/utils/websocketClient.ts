@@ -27,9 +27,12 @@ export interface ChatCompletionRequest {
   type?: string;
   provider?: string;
   model?: string;
+  custom_model?: string;
   language?: string;
   excluded_dirs?: string;
   excluded_files?: string;
+  included_dirs?: string;
+  included_files?: string;
   deep_research?: boolean;
   max_iterations?: number;
 }
@@ -47,33 +50,29 @@ export const createChatWebSocket = (
   onMessage: (message: string) => void,
   onError: (error: Event) => void,
   onClose: () => void
-): WebSocket => {
-  // Create WebSocket connection
-  const ws = new WebSocket(getWebSocketUrl());
-  
-  // Set up event handlers
-  ws.onopen = () => {
-    console.log('WebSocket connection established');
-    // Send the request as JSON
-    ws.send(JSON.stringify(request));
-  };
-  
-  ws.onmessage = (event) => {
-    // Call the message handler with the received text
-    onMessage(event.data);
-  };
-  
-  ws.onerror = (error) => {
-    console.error('WebSocket error:', error);
-    onError(error);
-  };
-  
-  ws.onclose = () => {
-    console.log('WebSocket connection closed');
-    onClose();
-  };
-  
-  return ws;
+): Promise<WebSocket> => {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(getWebSocketUrl());
+
+    ws.onopen = () => {
+      console.log("WebSocket connection established");
+      ws.send(JSON.stringify(request));
+      resolve(ws);
+    };
+
+    ws.onmessage = (event) => onMessage(event.data);
+
+    ws.onerror = (error) => {
+      console.error("WebSocket error:", error);
+      onError(error);
+      reject(error);
+    };
+
+    ws.onclose = () => {
+      console.log("WebSocket connection closed");
+      onClose();
+    };
+  });
 };
 
 /**
@@ -81,7 +80,8 @@ export const createChatWebSocket = (
  * @param ws The WebSocket connection to close
  */
 export const closeWebSocket = (ws: WebSocket | null): void => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
+  if (!ws) return;
+  if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
     ws.close();
   }
 };

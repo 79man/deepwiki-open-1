@@ -49,9 +49,12 @@ app.add_middleware(
 )
 
 # Models for the API
+
+
 class ChatMessage(BaseModel):
     role: str  # 'user' or 'assistant'
     content: str
+
 
 class ChatCompletionRequest(BaseModel):
     """
@@ -72,8 +75,9 @@ class ChatCompletionRequest(BaseModel):
     excluded_files: Optional[str] = Field(None, description="Comma-separated list of file patterns to exclude from processing")
     included_dirs: Optional[str] = Field(None, description="Comma-separated list of directories to include exclusively")
     included_files: Optional[str] = Field(None, description="Comma-separated list of file patterns to include exclusively")
-    deep_research: Optional[bool] = Field(False, description="Enable deep research mode")  
+    deep_research: Optional[bool] = Field(False, description="Enable deep research mode")
     max_iterations: Optional[int] = Field(5, description="Maximum research iterations")
+
 
 @app.post("/chat/completions/stream")
 async def chat_completions_stream(request: ChatCompletionRequest):
@@ -86,12 +90,12 @@ async def chat_completions_stream(request: ChatCompletionRequest):
             last_message = request.messages[-1]
             if hasattr(last_message, 'content') and last_message.content:
                 tokens = count_tokens(last_message.content, request.provider == "ollama")
-                # Get context window size for this provider/model  
-                context_window = get_context_window_size(request.provider, request.model)  
-                # Use 80% of context window as safe limit to leave room for response  
-                safe_limit = int(context_window * 0.8)  
-                
-                logger.info(f"Request size: {tokens} tokens (limit: {safe_limit})")  
+                # Get context window size for this provider/model
+                context_window = get_context_window_size(request.provider, request.model)
+                # Use 80% of context window as safe limit to leave room for response
+                safe_limit = int(context_window * 0.8)
+
+                logger.info(f"Request size: {tokens} tokens (limit: {safe_limit})")
                 if tokens > safe_limit:
                     logger.warning(f"Request exceeds recommended token limit ({tokens} > {safe_limit})")
                     input_too_large = True
@@ -107,16 +111,20 @@ async def chat_completions_stream(request: ChatCompletionRequest):
             included_files = None
 
             if request.excluded_dirs:
-                excluded_dirs = [unquote(dir_path) for dir_path in request.excluded_dirs.split('\n') if dir_path.strip()]
+                excluded_dirs = [unquote(dir_path) for dir_path in request.excluded_dirs.split(
+                    '\n') if dir_path.strip()]
                 logger.info(f"Using custom excluded directories: {excluded_dirs}")
             if request.excluded_files:
-                excluded_files = [unquote(file_pattern) for file_pattern in request.excluded_files.split('\n') if file_pattern.strip()]
+                excluded_files = [unquote(file_pattern) for file_pattern in request.excluded_files.split(
+                    '\n') if file_pattern.strip()]
                 logger.info(f"Using custom excluded files: {excluded_files}")
             if request.included_dirs:
-                included_dirs = [unquote(dir_path) for dir_path in request.included_dirs.split('\n') if dir_path.strip()]
+                included_dirs = [unquote(dir_path) for dir_path in request.included_dirs.split(
+                    '\n') if dir_path.strip()]
                 logger.info(f"Using custom included directories: {included_dirs}")
             if request.included_files:
-                included_files = [unquote(file_pattern) for file_pattern in request.included_files.split('\n') if file_pattern.strip()]
+                included_files = [unquote(file_pattern) for file_pattern in request.included_files.split(
+                    '\n') if file_pattern.strip()]
                 logger.info(f"Using custom included files: {included_files}")
 
             request_rag.prepare_retriever(request.repo_url, request.type, request.token, excluded_dirs, excluded_files, included_dirs, included_files)
@@ -169,14 +177,28 @@ async def chat_completions_stream(request: ChatCompletionRequest):
             for msg in request.messages:
                 if hasattr(msg, 'content') and msg.content and "[DEEP RESEARCH]" in msg.content:
                     is_deep_research = True
-                    # Only remove the tag from the last message
-                    if msg == request.messages[-1]:
-                        # Remove the Deep Research tag
-                        msg.content = msg.content.replace("[DEEP RESEARCH]", "").strip()
+                    break
 
         # Count research iterations if this is a Deep Research request
         if is_deep_research:
-            research_iteration = sum(1 for msg in request.messages if msg.role == 'assistant') + 1
+
+            # Only remove the tag from the last_message
+            if last_message:
+                last_message.content = last_message.content.replace(
+                    "[DEEP RESEARCH]", "").strip()
+
+            logger.info(
+                f"[DEEP RESEARCH] MESSAGES.count: {len(request.messages)}")
+            
+            # user_turns = [m for m in request.messages if m.role == 'user']
+            assistant_turns = [m for m in request.messages if m.role == 'assistant']
+            research_iteration = len(assistant_turns) + 1
+            logger.info(
+                f"[DEEP RESEARCH] assistant turns: {len(assistant_turns)}, research_iteration: {research_iteration}"
+            )
+
+            # research_iteration = sum(
+            #     1 for msg in request.messages if msg.role == 'assistant') + 1
             logger.info(f"Deep Research request detected - iteration {research_iteration}")
 
             # Check if this is a continuation request
@@ -215,40 +237,41 @@ async def chat_completions_stream(request: ChatCompletionRequest):
                     # This will use the actual RAG implementation
                     rag_answer, retrieved_documents = request_rag(rag_query, language=request.language)
 
-                    if retrieved_documents and retrieved_documents[0].documents:  
-                        # Format context for the prompt in a more structured way  
-                        documents = retrieved_documents[0].documents  
-                        doc_scores = retrieved_documents[0].doc_scores  # Extract scores  
-                        logger.info(f"Retrieved {len(documents)} documents")  
-                    
-                        # Group documents by file path with their scores  
-                        docs_by_file = {}  
-                        for idx, doc in enumerate(documents):  
-                            file_path = doc.meta_data.get('file_path', 'unknown')  
-                            if file_path not in docs_by_file:  
-                                docs_by_file[file_path] = []  
-                            # Store document with its score  
-                            score = doc_scores[idx] if idx < len(doc_scores) else None  
-                            docs_by_file[file_path].append((doc, score))  
-                    
-                        # Format context text with file path grouping and scores  
-                        context_parts = []  
-                        for file_path, doc_score_pairs in docs_by_file.items():  
-                            # Add file header with metadata  
-                            header = f"## File Path: {file_path}\n\n"  
-                            
-                            # Add document content with relevance scores  
-                            content_parts = []  
-                            for doc, score in doc_score_pairs:  
-                                score_str = f"(Relevance: {score:.3f})" if score is not None else "(Relevance: N/A)"  
-                                content_parts.append(f"{score_str}\n{doc.text}")  
-                            
-                            content = "\n\n".join(content_parts)  
-                            context_parts.append(f"{header}{content}")  
-                    
-                        # Join all parts with clear separation  
-                        context_text = "\n\n" + "-" * 10 + "\n\n".join(context_parts)  
-                    else:  
+                    if retrieved_documents and retrieved_documents[0].documents:
+                        # Format context for the prompt in a more structured way
+                        documents = retrieved_documents[0].documents
+                        # Extract scores
+                        doc_scores = retrieved_documents[0].doc_scores
+                        logger.info(f"Retrieved {len(documents)} documents")
+
+                        # Group documents by file path with their scores
+                        docs_by_file = {}
+                        for idx, doc in enumerate(documents):
+                            file_path = doc.meta_data.get('file_path', 'unknown')
+                            if file_path not in docs_by_file:
+                                docs_by_file[file_path] = []
+                            # Store document with its score
+                            score = doc_scores[idx] if idx < len(doc_scores) else None
+                            docs_by_file[file_path].append((doc, score))
+
+                        # Format context text with file path grouping and scores
+                        context_parts = []
+                        for file_path, doc_score_pairs in docs_by_file.items():
+                            # Add file header with metadata
+                            header = f"## File Path: {file_path}\n\n"
+
+                            # Add document content with relevance scores
+                            content_parts = []
+                            for doc, score in doc_score_pairs:
+                                score_str = f"(Relevance: {score:.3f})" if score is not None else "(Relevance: N/A)"
+                                content_parts.append(f"{score_str}\n{doc.text}")
+
+                            content = "\n\n".join(content_parts)
+                            context_parts.append(f"{header}{content}")
+
+                        # Join all parts with clear separation
+                        context_text = "\n\n" + "-" * 10 + "\n\n".join(context_parts)
+                    else:
                         logger.warning(f"No documents retrieved from RAG: {rag_answer}")
                 except Exception as e:
                     logger.error(f"Error in RAG retrieval: {str(e)}")
@@ -474,13 +497,13 @@ async def chat_completions_stream(request: ChatCompletionRequest):
                     # Handle streaming response from Ollama
                     async for chunk in response:
                         logger.debug(f"Manoj: simple chat Ollama RCV CHUNK: {chunk}")
-                        # Extract text from Ollama's message structure  
-                        text = None  
-                        if hasattr(chunk, 'message') and hasattr(chunk.message, 'content'):  
-                            text = chunk.message.content  
-                        else:  
-                            text = getattr(chunk, 'response', None) or getattr(chunk, 'text', None) or str(chunk)  
-                        
+                        # Extract text from Ollama's message structure
+                        text = None
+                        if hasattr(chunk, 'message') and hasattr(chunk.message, 'content'):
+                            text = chunk.message.content
+                        else:
+                            text = getattr(chunk, 'response', None) or getattr(chunk, 'text', None) or str(chunk)
+
                         logger.debug(f"Manoj: simple chat Ollama RCV text: {text}")
 
                         # text = getattr(chunk, 'response', None) or getattr(chunk, 'text', None) or getattr(chunk, 'text', None) or str(chunk)
@@ -505,10 +528,10 @@ async def chat_completions_stream(request: ChatCompletionRequest):
                         response = await model.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
                         # Handle streaming response from Openai
                         async for chunk in response:
-                           choices = getattr(chunk, "choices", [])
-                           if len(choices) > 0:
-                               delta = getattr(choices[0], "delta", None)
-                               if delta is not None:
+                            choices = getattr(chunk, "choices", [])
+                            if len(choices) > 0:
+                                delta = getattr(choices[0], "delta", None)
+                                if delta is not None:
                                     text = getattr(delta, "content", None)
                                     if text is not None:
                                         yield text
@@ -714,6 +737,7 @@ async def chat_completions_stream(request: ChatCompletionRequest):
         error_msg = f"Error in streaming chat completion: {str(e_handler)}"
         logger.error(error_msg)
         raise HTTPException(status_code=500, detail=error_msg)
+
 
 @app.get("/")
 async def root():
