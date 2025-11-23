@@ -45,6 +45,8 @@ import {
   ChatCompletionRequest,
 } from "@/utils/websocketClient";
 
+import IterationTabs from "@/components/IterationTabs";
+
 // Define the WikiSection and WikiStructure types directly in this file
 // since the imported types don't have the sections and rootSections properties
 interface WikiSection {
@@ -54,40 +56,7 @@ interface WikiSection {
   subsections?: string[];
 }
 
-interface WikiPage {
-  /**
-   * Represents a single wiki page with metadata
-   * @property id - Unique identifier (e.g., "page-1")
-   * @property title - Display title for the page
-   * @property importance - Priority level: "high" | "medium" | "low"
-   * @property pageType - Content type for tailored prompts:
-   *   - "architecture": System design pages
-   *   - "api": API documentation
-   *   - "configuration": Config file docs
-   *   - "deployment": Deployment guides
-   *   - "data_model": Database schemas
-   *   - "component": UI/module docs
-   *   - "general": Overview pages
-   * @property filePaths - Source files used to generate content
-   */
-  id: string;
-  title: string;
-  content: string;
-  filePaths: string[];
-  importance: "high" | "medium" | "low";
-  pageType?:
-    | "architecture"
-    | "api"
-    | "configuration"
-    | "deployment"
-    | "data_model"
-    | "component"
-    | "general";
-  relatedPages: string[];
-  parentId?: string;
-  isSection?: boolean;
-  children?: string[];
-}
+import { WikiPage, WikiPageIteration } from "@/types/wiki/wikipage";
 
 interface WikiStructure {
   id: string;
@@ -491,6 +460,7 @@ export default function RepoWikiPage() {
   const currentIterationRef = useRef(currentIteration);
   const researchCompleteRef = useRef(researchComplete);
   let latestIterationRef = useRef(0);
+  const generatedPagesRef = useRef(generatedPages);
 
   function showPromptEditModal(
     prompt: string,
@@ -578,6 +548,10 @@ export default function RepoWikiPage() {
   useEffect(() => {
     latestIterationRef.current = currentIteration;
   }, [currentIteration]);
+
+  useEffect(() => {
+    generatedPagesRef.current = generatedPages;
+  }, [generatedPages]);
 
   // close the modal when escape is pressed
   useEffect(() => {
@@ -1789,11 +1763,45 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
               timeTaken,
             });
 
+            // Get existing iterations or initialize empty array
+            const existingPage = generatedPagesRef.current[pageId];
+            const existingIterations = existingPage?.iterations || [];
+
+            // Add new iteration
+            const newIteration: WikiPageIteration = {
+              iteration: currentIterationRef.current,
+              content: currentIterationContent,
+              timestamp: Date.now(),
+              model: finalModel,
+              provider: finalProvider,
+            };
+
+            console.log(
+              `existingIterations: ${existingIterations.length}`
+            );
+            console.log(`newIteration: ${newIteration.iteration}`);
+
             // Store all iterations in the page
-            setGeneratedPages((prev) => ({
-              ...prev,
-              [pageId]: { ...page, content: allIterationsContent }, // All iterations
-            }));
+            // setGeneratedPages((prev) => ({
+            //   ...prev,
+            //   [pageId]: {
+            //     ...page,
+            //     content: allIterationsContent,
+            //     iterations: [...existingIterations, newIteration],
+            //   },
+            // }));
+            setGeneratedPages((prev) => {
+              const prevPage = prev[pageId] || {};
+
+              return {
+                ...prev,
+                [pageId]: {
+                  ...prevPage, // <-- keep stored fields
+                  content: allIterationsContent,
+                  iterations: [...existingIterations, newIteration],
+                },
+              };
+            });
 
             setPageConversationHistory((prev) => ({
               ...prev,
@@ -1881,13 +1889,13 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
                 .map((msg, idx) => `### Iteration ${idx + 1}\n${msg.content}`)
                 .join("\n\n");
 
-              // Add current iteration  
-              const currentResponse = `### Iteration ${latestIter}\n${content}`;  
-                
-              // Combine all iterations  
-              allIterationsContent = previousResponses   
-                ? `${previousResponses}\n\n${currentResponse}`   
-                : currentResponse; 
+              // Add current iteration
+              const currentResponse = `### Iteration ${latestIter}\n${content}`;
+
+              // Combine all iterations
+              allIterationsContent = previousResponses
+                ? `${previousResponses}\n\n${currentResponse}`
+                : currentResponse;
             }
 
             finalize(content, allIterationsContent);
@@ -2006,7 +2014,7 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
 
           setGeneratedPages((prev) => ({
             ...prev,
-            [page.id]: { ...page, content: "Loading..." },
+            [page.id]: { ...page, content: "Loading...", iterations: [] },
           }));
           setOriginalMarkdown((prev) => ({ ...prev, [page.id]: "" }));
 
@@ -2066,6 +2074,7 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
               const parsed = JSON.parse(data);
               if (parsed.type === "iteration_status") {
                 latestIteration = parsed.current_iteration || 0;
+                latestIterationRef.current = latestIteration;
                 setCurrentIteration(latestIteration);
                 // setLoadingMessage(
                 //   `Research iteration ${latestIteration} in progress...`
@@ -2082,15 +2091,50 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
           const finalize = (finalContent: string) => {
             let completedContent = finalContent;
 
+            // Get existing page data
+            const existingPage = generatedPages[page.id] || {};
+            const existingIterations =
+              Array.isArray(existingPage.iterations) ? existingPage.iterations : [];
+
+            const iterationNumber =
+              latestIterationRef.current > 0
+                ? latestIterationRef.current
+                : existingIterations.length + 1;
+
+              // Add current iteration
+            const newIteration = {
+              iteration: iterationNumber,
+              content: completedContent, // Store raw iteration content
+              timestamp: Date.now(),
+              model: finalModel,
+              provider: finalProvider,
+            };
+
+            setPageConversationHistory((prev) => ({
+              ...prev,
+              [page.id]: [
+                ...(prev[page.id] || []),
+                { role: "assistant", content: finalContent },
+              ],
+            }));
+
             if (deep_research) {
               const isComplete = false; //checkIfResearchComplete(finalContent);
-              const forceComplete =
-                latestIterationRef.current >= max_iterations;
+              const forceComplete = iterationNumber >= max_iterations;
 
               if (forceComplete && !isComplete) {
                 completedContent +=
                   "\n\n## Final Conclusion\nAfter multiple iterations, we’ve reached sufficient insights.";
-              }
+              }              
+
+              setGeneratedPages((prev) => ({
+                ...prev,
+                [page.id]: {
+                  ...prev[page.id],
+                  content: completedContent,
+                  iterations: [...existingIterations, newIteration],
+                },
+              }));
 
               if (forceComplete || isComplete) {
                 setResearchComplete(true);
@@ -2110,20 +2154,15 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
                 setIsLoading(false);
                 setLoadingMessage(undefined);
               }, 600);
-            }
 
-            setGeneratedPages((prev) => ({
-              ...prev,
-              [page.id]: { ...page, content: completedContent },
-            }));
-
-            setPageConversationHistory((prev) => ({
-              ...prev,
-              [page.id]: [
-                ...(prev[page.id] || []),
-                { role: "assistant", content: finalContent },
-              ],
-            }));
+              setGeneratedPages((prev) => ({
+                ...prev,
+                [page.id]: {
+                  ...prev[page.id],
+                  content: completedContent,
+                },
+              }));
+            }           
 
             setPageAnalytics((prev) => ({
               ...prev,
@@ -4153,6 +4192,7 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
               wiki_analytics: wikiAnalytics,
               page_analytics: pageAnalytics,
             };
+
             const response = await fetch(`/api/wiki_cache`, {
               method: "POST",
               headers: {
@@ -4778,7 +4818,8 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
                   </div>
 
                   <div className="prose prose-sm md:prose-base lg:prose-lg max-w-none">
-                    <Markdown content={generatedPages[currentPageId].content} />
+                    {/* <Markdown content={generatedPages[currentPageId].content} /> */}
+                    <IterationTabs page={generatedPages[currentPageId]} />
                   </div>
 
                   {generatedPages[currentPageId].relatedPages.length > 0 && (

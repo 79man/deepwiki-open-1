@@ -94,6 +94,12 @@ def get_adalflow_default_root_path():
 
 # --- Pydantic Models ---
 
+class WikiPageIteration(BaseModel):  
+    iteration: int  
+    content: str  
+    timestamp: int  
+    model: Optional[str] = None  
+    provider: Optional[str] = None
 
 class WikiPage(BaseModel):
     """
@@ -102,6 +108,7 @@ class WikiPage(BaseModel):
     id: str
     title: str
     content: str
+    iterations: Optional[List[WikiPageIteration]] = None
     filePaths: List[str]
     importance: str  # Should ideally be Literal['high', 'medium', 'low']
     # Should ideally be Literal['architecture' | 'api' | 'configuration' | 'deployment' | 'data_model' | 'component' | 'general']
