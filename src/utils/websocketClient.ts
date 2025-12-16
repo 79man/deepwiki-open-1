@@ -35,6 +35,7 @@ export interface ChatCompletionRequest {
   included_files?: string;
   deep_research?: boolean;
   max_iterations?: number;
+  verbose_mode?:boolean;
 }
 
 /**

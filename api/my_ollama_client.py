@@ -24,7 +24,12 @@ from adalflow.utils.lazy_import import safe_import, OptionalPackages
 import logging
 # Configure logging
 logger = logging.getLogger(__name__)
+# logger.setLevel(logging.DEBUG)
 
+# from adalflow.utils import get_logger
+
+# adal_logger = get_logger(level="DEBUG")
+# adal_logger.setLevel(logging.DEBUG)
 
 ollama = safe_import(
     OptionalPackages.OLLAMA.value[0], OptionalPackages.OLLAMA.value[1])
@@ -141,6 +146,44 @@ def parse_chat_messsage(completion: Dict[str, Any]) -> "GeneratorOutput":
         return GeneratorOutput(
             data=None, error="Error parsing the chat message", api_response=completion, raw_response=raw_response, thinking=thinking
         )
+
+
+def _truncate_api_kwargs(api_kwargs: dict) -> dict:
+    """
+    Create a copy of api_kwargs with truncated messages for logging purposes.
+    
+    Truncates the 'content' field of each message to 200 characters if it exceeds
+    that length, appending '...[truncated]' to indicate the truncation.
+    
+    Args:
+        api_kwargs (dict): A dictionary containing API keyword arguments, 
+                          potentially including a 'messages' key with a list of message objects.
+    
+    Returns:
+        dict: A shallow copy of api_kwargs with truncated message content for logging.
+              Original api_kwargs remains unchanged.
+    
+    Example:
+        >>> api_kwargs = {
+        ...     'messages': [
+        ...         {'role': 'user', 'content': 'x' * 250}
+        ...     ]
+        ... }
+        >>> result = _truncate_api_kwargs(api_kwargs)
+        >>> len(result['messages'][0]['content'])
+        213  # 200 + len('...[truncated]')
+    """
+    truncated = api_kwargs.copy()
+    if 'messages' in truncated:
+        truncated_messages = []
+        for msg in truncated['messages']:
+            truncated_msg = msg.copy()
+            if 'content' in truncated_msg and len(truncated_msg['content']) > 200:
+                truncated_msg['content'] = truncated_msg['content'][:200] + \
+                    '...[truncated]'
+            truncated_messages.append(truncated_msg)
+        truncated['messages'] = truncated_messages
+    return truncated
 
 
 class MyOllamaClient(ModelClient):
@@ -369,14 +412,39 @@ class MyOllamaClient(ModelClient):
             return parse_chat_messsage(completion)
 
     def parse_embedding_response(
-        self, response: Dict[str, List[float]]
+        self, response: Union[Dict[str, List[float]], List[Dict[str, List[float]]]]
     ) -> EmbedderOutput:
         r"""Parse the embedding response to a structure AdalFlow components can understand.
-        Pull the embedding from response['embedding'] and store it Embedding dataclass
+        Pulls embeddings from the response and stores them in Embedding dataclasses.
+        Handles both single and batch embedding responses.
         """
         try:
-            embeddings = Embedding(embedding=response["embedding"], index=0)
-            return EmbedderOutput(data=[embeddings])
+            # embeddings = Embedding(embedding=response["embedding"], index=0)
+            # return EmbedderOutput(data=[embeddings])
+            all_embeddings = []
+            if isinstance(response, list):
+                # Handle batch embedding response (list of individual responses)
+                for i, r in enumerate(response):
+                    if "embedding" in r and isinstance(r["embedding"], list):
+                        all_embeddings.append(
+                            Embedding(embedding=r["embedding"], index=i))
+                    else:
+                        # Log the specific issue with the response item
+                        log.warning(
+                            f"Response item at index {i} does not contain 'embedding' key or 'embedding' is not a list: {r}")
+            elif isinstance(response, dict) and "embedding" in response:
+                # Handle single embedding response
+                all_embeddings.append(
+                    Embedding(embedding=response["embedding"], index=0))
+            elif "embedding" in response:
+                # Handle single embedding response
+                all_embeddings.append(
+                    Embedding(embedding=response["embedding"], index=0))
+            else:
+                raise ValueError(
+                    f"Unexpected embedding response format: {response}. Expected a dictionary with 'embedding' key or a list of such dictionaries.")
+
+            return EmbedderOutput(data=all_embeddings)
         except Exception as e:
             log.error(f"Error parsing the embedding response: {e}")
             return EmbedderOutput(data=[], error=str(e), raw_response=response)
@@ -387,14 +455,33 @@ class MyOllamaClient(ModelClient):
         model_kwargs: Dict = {},
         model_type: ModelType = ModelType.UNDEFINED,
     ) -> Dict:
+        logger.info(f"Invoked convert_inputs_to_api_kwargs({_truncate_api_kwargs(model_kwargs)}, {model_type})")
         r"""Convert the input and model_kwargs to api_kwargs for the Ollama SDK client."""
         # TODO: ollama will support batch embedding in the future: https://ollama.com/blog/embedding-models
         self.generate = False  # reset generate to False
         final_model_kwargs = model_kwargs.copy()
         if model_type == ModelType.EMBEDDER:
-            logger.info(f"Manoj: final_model_kwargs: {final_model_kwargs}")
-            logger.info(f"Manoj: input: {len(input) if input else 'Noneeee'}")
+            # Remove any 'options' or LLM-specific parameters not relevant to embedding
+            # These might inadvertently come from the shared get_model_config if not filtered for EMBEDDER specifically
+            if "options" in final_model_kwargs:
+                del final_model_kwargs["options"]
+            if "temperature" in final_model_kwargs:
+                del final_model_kwargs["temperature"]
+            if "top_p" in final_model_kwargs:
+                del final_model_kwargs["top_p"]
+            if "num_ctx" in final_model_kwargs:
+                del final_model_kwargs["num_ctx"]
+
+            # logger.info(f"Manoj: final_model_kwargs: {final_model_kwargs}")
+            logger.info(
+                f"Manoj: final_model_kwargs:\n{_truncate_api_kwargs(final_model_kwargs)})")
+            logger.info(
+                f"Manoj: len(input): {len(input) if input else 'None'}")
             if isinstance(input, str):
+                final_model_kwargs["prompt"] = input
+                return final_model_kwargs
+            elif isinstance(input, list) and all(isinstance(i, str) for i in input):
+                # Ollama client's embeddings method can take a list of prompts
                 final_model_kwargs["prompt"] = input
                 return final_model_kwargs
             else:
@@ -438,7 +525,25 @@ class MyOllamaClient(ModelClient):
         if self.sync_client is None:
             raise RuntimeError("Sync client is not initialized")
         if model_type == ModelType.EMBEDDER:
-            return self.sync_client.embeddings(**api_kwargs)
+            # return self.sync_client.embeddings(**api_kwargs)
+            prompt_input = api_kwargs.get("prompt")
+            if isinstance(prompt_input, list):
+                # Handle batch embedding by iterating over the list
+                all_embeddings = []
+                for prompt_text in prompt_input:
+                    single_embed_kwargs = api_kwargs.copy()
+                    single_embed_kwargs["prompt"] = prompt_text
+                    response = self.sync_client.embeddings(
+                        **single_embed_kwargs)
+                    all_embeddings.append(response)
+                # Combine responses; the exact structure depends on what adalflow expects for batch
+                # For now, we'll return a list of individual responses.
+                # If adalflow expects a single response object with all embeddings,
+                # further processing will be needed here.
+                return all_embeddings
+            else:
+                # Single string input, as originally handled
+                return self.sync_client.embeddings(**api_kwargs)
         if model_type == ModelType.LLM:
             if "generate" in api_kwargs and api_kwargs["generate"]:
                 # remove generate from api_kwargs
@@ -464,15 +569,36 @@ class MyOllamaClient(ModelClient):
         if "model" not in api_kwargs:
             raise ValueError("model must be specified")
         if model_type == ModelType.EMBEDDER:
-            return await self.async_client.embeddings(**api_kwargs)
+            # return await self.async_client.embeddings(**api_kwargs)
+            prompt_input = api_kwargs.get("prompt")
+            if isinstance(prompt_input, list):
+                # Handle async batch embedding by iterating over the list
+                all_embeddings = []
+                for prompt_text in prompt_input:
+                    single_embed_kwargs = api_kwargs.copy()
+                    single_embed_kwargs["prompt"] = prompt_text
+                    response = await self.async_client.embeddings(**single_embed_kwargs)
+                    all_embeddings.append(response)
+                # Combine responses. Similar to sync call, further processing might be needed
+                # depending on adalflow's expected batch embedding output format.
+                return all_embeddings
+            else:
+                # Single string input
+                return await self.async_client.embeddings(**api_kwargs)
         if model_type == ModelType.LLM:  # in default we use chat
             # create a message from the input
             if "generate" in api_kwargs and api_kwargs["generate"]:
                 # remove generate from api_kwargs
                 api_kwargs.pop("generate")
+                logger.info(
+                    f"Calling generate chat(api_kwargs:\n{_truncate_api_kwargs(api_kwargs)})")
+
                 return await self.async_client.generate(**api_kwargs)
             else:
-                logger.info(f"Calling chat(api_kwargs:\n{api_kwargs})")
+                # logger.info(f"Calling chat(api_kwargs:\n{api_kwargs})")
+                logger.info(
+                    f"Calling chat(api_kwargs:\n{_truncate_api_kwargs(api_kwargs)})")
+
                 return await self.async_client.chat(**api_kwargs)
         else:
             raise ValueError(f"model_type {model_type} is not supported")

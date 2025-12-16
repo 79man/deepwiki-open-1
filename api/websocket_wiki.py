@@ -93,6 +93,23 @@ class ChatCompletionRequest(BaseModel):
         False, description="Enable deep research mode")
     max_iterations: Optional[int] = Field(
         5, description="Maximum research iterations")
+    verbose_mode: Optional[bool] = Field(
+        False, description="Send back detailed benchmark data to UI")
+
+
+def _truncate_api_kwargs(api_kwargs: dict) -> dict:
+    """Create a copy of api_kwargs with truncated messages for logging."""
+    truncated = api_kwargs.copy()
+    if 'messages' in truncated:
+        truncated_messages = []
+        for msg in truncated['messages']:
+            truncated_msg = msg.copy()
+            if 'content' in truncated_msg and len(truncated_msg['content']) > 200:
+                truncated_msg['content'] = truncated_msg['content'][:200] + \
+                    '...[truncated]'
+            truncated_messages.append(truncated_msg)
+        truncated['messages'] = truncated_messages
+    return truncated
 
 
 async def handle_websocket_chat(websocket: WebSocket):
@@ -106,6 +123,14 @@ async def handle_websocket_chat(websocket: WebSocket):
         # Receive and parse the request data
         request_data = await websocket.receive_json()
         request = ChatCompletionRequest(**request_data)
+
+        # Create progress callback
+        async def send_progress(message: str):
+            await websocket.send_json({
+                "type": "progress",
+                "message": message,
+                "timestamp": datetime.now().isoformat()
+            })
 
         # Check if request contains very large input
         input_too_large = False
@@ -131,7 +156,10 @@ async def handle_websocket_chat(websocket: WebSocket):
 
         # Create a new RAG instance for this request
         try:
-            request_rag = RAG(provider=request.provider, model=request.model)
+            request_rag: RAG = RAG(
+                provider=request.provider,
+                model=request.model
+            )
 
             # Extract custom file filter parameters if provided
             excluded_dirs = None
@@ -158,8 +186,13 @@ async def handle_websocket_chat(websocket: WebSocket):
                     '\n') if file_pattern.strip()]
                 logger.info(f"Using custom included files: {included_files}")
 
-            request_rag.prepare_retriever(request.repo_url, request.type, request.token,
-                                          excluded_dirs, excluded_files, included_dirs, included_files)
+            request_rag.prepare_retriever(
+                request.repo_url, request.type,
+                request.token,
+                excluded_dirs, excluded_files,
+                included_dirs, included_files,
+                send_progress
+            )
             logger.info(f"Retriever prepared for {request.repo_url}")
         except ValueError as e:
             if "No valid documents with embeddings found" in str(e):
@@ -208,6 +241,7 @@ async def handle_websocket_chat(websocket: WebSocket):
 
         # Check if this is a Deep Research request
         is_deep_research = False
+        is_verbose = request.verbose_mode or False
         max_iterations = request.max_iterations or 5
         research_iteration = 1
 
@@ -223,7 +257,7 @@ async def handle_websocket_chat(websocket: WebSocket):
         # Count research iterations if this is a Deep Research request
         # Get the query from the last message
         query = last_message.content
-        
+
         if is_deep_research:
 
             # Only remove the tag from the last_message
@@ -272,7 +306,7 @@ async def handle_websocket_chat(websocket: WebSocket):
                         # No need to remove tag again - already done above
                         query = msg.content
                         logger.info(f"Using original topic: {query[:50]}...")
-                        break            
+                        break
 
         # Only retrieve documents if input is not too large
         context_text = ""
@@ -349,13 +383,13 @@ async def handle_websocket_chat(websocket: WebSocket):
                 context_text = ""
 
         # Send the Rag Query and RAG results back to the client
-
-        await websocket.send_text(json.dumps({
-            "type": "rag_details",
-            "query": rag_query,
-            "retrieved" : retrieved_documents_count,
-            "results": context_text
-        }))
+        if is_verbose:
+            await websocket.send_text(json.dumps({
+                "type": "rag_details",
+                "query": rag_query,
+                "retrieved": retrieved_documents_count,
+                "results": context_text
+            }))
         # Get repository information
         repo_url = request.repo_url
         repo_name = repo_url.split("/")[-1] if "/" in repo_url else repo_url
@@ -464,15 +498,15 @@ async def handle_websocket_chat(websocket: WebSocket):
             model_kwargs = {
                 "model": model_config["model"],
                 "stream": True,
-                "options": {
-                    "temperature": model_config["temperature"],
-                    "top_p": model_config["top_p"],
-                    "num_ctx": model_config["num_ctx"]
+                "options": model_config['options'] if 'options' in model_config else {
+                    "temperature": model_config["temperature"] if 'temperature' in model_config else 0.7,
+                    "top_p": model_config["top_p"] if 'top_p' in model_config else 0.9,
+                    "num_ctx": model_config["num_ctx"] if 'num_ctx' in model_config else 32000,
                 }
             }
 
             logger.info(
-                f"B4 convert_inputs_to_api_kwargs:\nmodel_kwargs:\n{model_kwargs}")
+                f"B4 convert_inputs_to_api_kwargs:\nmodel_kwargs:\n{_truncate_api_kwargs(model_kwargs)}")
 
             api_kwargs = model.convert_inputs_to_api_kwargs(
                 input=prompt,
@@ -481,7 +515,7 @@ async def handle_websocket_chat(websocket: WebSocket):
             )
 
             logger.info(
-                f"After convert_inputs_to_api_kwargs: api_kwargs:\n{api_kwargs}")
+                f"After convert_inputs_to_api_kwargs: api_kwargs:\n{_truncate_api_kwargs(api_kwargs)}")
         elif request.provider == "openrouter":
             logger.info(f"Using OpenRouter with model: {request.model}")
 
@@ -584,7 +618,8 @@ async def handle_websocket_chat(websocket: WebSocket):
                 "max_iterations": request.max_iterations or 5,
                 "status": "in_progress"
             })
-            await websocket.send_text(status_message)
+            if is_verbose:
+                await websocket.send_text(status_message)
             logger.info(f"Sent iteration status: {status_message}")
 
         # Process the response based on the provider
@@ -602,10 +637,12 @@ async def handle_websocket_chat(websocket: WebSocket):
                     }))
 
                 # Send the actual prompt to client for logging
-                await websocket.send_text(json.dumps({
-                    "type": "llm_prompt",
-                    "content": prompt
-                }))
+                if is_verbose:
+                    await websocket.send_text(json.dumps({
+                        "type": "llm_prompt",
+                        "content": prompt,
+                        "length": len(prompt),
+                    }))
 
                 # Get the response and handle it properly using the previously created api_kwargs
                 response = await model.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
@@ -643,7 +680,8 @@ async def handle_websocket_chat(websocket: WebSocket):
                         "max_iterations": request.max_iterations or 5,
                         "status": "complete"
                     })
-                    await websocket.send_text(completion_message)
+                    if is_verbose:
+                        await websocket.send_text(completion_message)
                     logger.info(
                         f"Sent iteration completion: {completion_message}")
 

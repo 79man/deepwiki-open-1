@@ -5,11 +5,11 @@ from adalflow.components.retriever.faiss_retriever import FAISSRetriever
 import logging
 import weakref
 import re
-from dataclasses import dataclass
 from typing import Any, List, Tuple, Dict
 from uuid import uuid4
 
 import adalflow as adal
+from adalflow import DataClass
 
 from api.tools.embedder import get_embedder
 from api.prompts import RAG_SYSTEM_PROMPT as system_prompt, RAG_TEMPLATE
@@ -161,11 +161,19 @@ class Memory(adal.core.component.DataComponent):
 
 
 @dataclass
-class RAGAnswer(adal.DataClass):
-    rationale: str = field(default="", metadata={
-                           "desc": "Chain of thoughts for the answer."})
-    answer: str = field(default="", metadata={
-                        "desc": "Answer to the user query, formatted in markdown for beautiful rendering with react-markdown. DO NOT include ``` triple backticks fences at the beginning or end of your answer."})
+class RAGAnswer(DataClass):
+    rationale: str = field(
+        default="",
+        metadata={
+            "desc": "Chain of thoughts for the answer."
+        }
+    )
+    answer: str = field(
+        default="",
+        metadata={
+            "desc": "Answer to the user query, formatted in markdown for beautiful rendering with react-markdown. DO NOT include ``` triple backticks fences at the beginning or end of your answer."
+        }
+    )
 
     __output_fields__ = ["rationale", "answer"]
 
@@ -233,7 +241,10 @@ class RAG(adal.Component):
 
         # Set up the output parser
         data_parser = adal.DataClassParser(
-            data_class=RAGAnswer, return_data_class=True)
+            data_class=RAGAnswer,
+            return_data_class=True,
+            format_type="json"
+        )
 
         # Format instructions to ensure proper output structure
         format_instructions = data_parser.get_output_format_str() + """
@@ -383,9 +394,14 @@ IMPORTANT FORMATTING RULES:
 
         return valid_documents
 
-    def prepare_retriever(self, repo_url_or_path: str, type: str = "github", access_token: str = None,
-                          excluded_dirs: List[str] = None, excluded_files: List[str] = None,
-                          included_dirs: List[str] = None, included_files: List[str] = None):
+    def prepare_retriever(
+        self,
+        repo_url_or_path: str, type: str = "github",
+        access_token: str = None,
+        excluded_dirs: List[str] = None, excluded_files: List[str] = None,
+        included_dirs: List[str] = None, included_files: List[str] = None,
+        progress_callback=None
+    ):
         """
         Prepare the retriever for a repository.
         Will load database from local storage if available.
@@ -408,7 +424,8 @@ IMPORTANT FORMATTING RULES:
             excluded_dirs=excluded_dirs,
             excluded_files=excluded_files,
             included_dirs=included_dirs,
-            included_files=included_files
+            included_files=included_files,
+            progress_callback=progress_callback
         )
         logger.info(
             f"Loaded {len(self.transformed_docs)} documents for retrieval")

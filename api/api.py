@@ -1,3 +1,4 @@
+from .deepwiki_db_analyzer import get_db_path, load_documents, report
 from api.config import configs, WIKI_AUTH_MODE, WIKI_AUTH_CODE
 from api.websocket_wiki import handle_websocket_chat
 from api.simple_chat import chat_completions_stream
@@ -94,12 +95,14 @@ def get_adalflow_default_root_path():
 
 # --- Pydantic Models ---
 
-class WikiPageIteration(BaseModel):  
-    iteration: int  
-    content: str  
-    timestamp: int  
-    model: Optional[str] = None  
+
+class WikiPageIteration(BaseModel):
+    iteration: int
+    content: str
+    timestamp: int
+    model: Optional[str] = None
     provider: Optional[str] = None
+
 
 class WikiPage(BaseModel):
     """
@@ -235,6 +238,56 @@ class ModelConfig(BaseModel):
 
 class AuthorizationConfig(BaseModel):
     code: str = Field(..., description="Authorization code")
+
+
+class DocumentInfo(BaseModel):
+    """
+    Model for detailed document information from the DeepWiki database.
+    Matches the structure returned by deepwiki_db_analyzer.report(json_output=True).
+    """
+    file_path: Optional[str] = None
+    chunk_id: Optional[str] = None
+    repo: Optional[str] = None
+    owner: Optional[str] = None
+    language: Optional[str] = None
+    source: Optional[str] = None
+    source_id: Optional[str] = None
+    content_length: int
+    content_preview: str
+
+
+@app.get("/api/db_info/{repo_name}", response_model=List[DocumentInfo])
+async def get_db_info_endpoint(
+    repo_name: str,
+    max_docs: Optional[int] = Query(
+        None, description="Maximum number of documents to display"),
+):
+    """
+    Retrieves information about a DeepWiki database for a given repository.
+    """
+    logger.info(f"Fetching DB info for repository: {repo_name}")
+    db_path = get_db_path(repo_name)
+    try:
+        # load_documents might be blocking, so run it in a thread
+        docs = await asyncio.to_thread(load_documents, db_path)
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404, detail=f"Database not found for {repo_name} at {db_path}")
+    except Exception as exc:
+        logger.error(f"Error loading documents for {repo_name}: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    # Generate the report in JSON format using the provided deepwiki_db_analyzer.report function
+    # The report function returns a JSON string, which we need to parse back into a Python object
+    # for FastAPI's response_model validation.
+    json_report_str = await asyncio.to_thread(report, docs, json_output=True, max_docs=max_docs)
+
+    # If json_report_str is None (which happens if there are no docs and json_output is True,
+    # and the report function doesn't return an empty JSON array), return an empty list.
+    if json_report_str is None:
+        return []
+
+    return json.loads(json_report_str)
 
 
 @app.get("/lang/config")
@@ -421,10 +474,14 @@ async def get_local_repo_structure(
     try:
         logger.info(f"Processing local repository at: {path}")
         # Parse filter parameters
-        excluded_dir_list = set([d.strip() for d in excluded_dirs.split('\n') if d.strip()] if excluded_dirs else [])
-        excluded_file_list = set([f.strip() for f in excluded_files.split('\n') if f.strip()] if excluded_files else [])
-        included_dir_list = set([d.strip() for d in included_dirs.split('\n') if d.strip()] if included_dirs else [])
-        included_file_list = set([f.strip() for f in included_files.split('\n') if f.strip()] if included_files else [])
+        excluded_dir_list = set([d.strip() for d in excluded_dirs.split(
+            '\n') if d.strip()] if excluded_dirs else [])
+        excluded_file_list = set([f.strip() for f in excluded_files.split(
+            '\n') if f.strip()] if excluded_files else [])
+        included_dir_list = set([d.strip() for d in included_dirs.split(
+            '\n') if d.strip()] if included_dirs else [])
+        included_file_list = set([f.strip() for f in included_files.split(
+            '\n') if f.strip()] if included_files else [])
 
         # file_tree_lines = []
         file_tree_data = []
@@ -432,22 +489,24 @@ async def get_local_repo_structure(
 
         gitignore_spec = load_gitignore_patterns(path)
         final_excluded_dir_list = EXCLUDED_DIRS.union(set(excluded_dir_list))
-        final_excluded_file_list = EXCLUDED_FILES.union(set(excluded_file_list))
+        final_excluded_file_list = EXCLUDED_FILES.union(
+            set(excluded_file_list))
 
         logger.info(f'final_excluded_dir_list: {final_excluded_dir_list}')
         logger.info(f'final_excluded_file_list: {final_excluded_file_list}')
 
         for root, dirs, files in os.walk(path):
             # eliminate dirs in EXCLUDED_DIRS and excluded_dir_list unless in included_dir_list
-            dirs[:] = [d for d in dirs if (d not in final_excluded_dir_list) or d in included_dir_list]
-            
+            dirs[:] = [d for d in dirs if (
+                d not in final_excluded_dir_list) or d in included_dir_list]
+
             # Apply .gitignore patterns
             if gitignore_spec:
                 dirs[:] = [
                     d for d in dirs if not gitignore_spec.match_file(os.path.relpath(os.path.join(root, d), path))]
 
             # eliminate files matching EXCLUDED_FILES using fnmatch.fnmatch unless in included_file_list
-            
+
             files[:] = [
                 f for f in files
                 if not any(fnmatch.fnmatch(f, pattern) for pattern in final_excluded_file_list) or any(fnmatch.fnmatch(f, pattern) for pattern in included_file_list)

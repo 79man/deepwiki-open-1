@@ -39,6 +39,7 @@ import {
 import PromptEditorModal from "@/components/PromptEditorModal"; // Adjust import path if needed
 import { usePromptLog } from "@/contexts/PromptLogContext";
 import PromptLogFloatingPanel from "@/components/PromptLogFloatingPanel";
+// import RetrievedDocsFloatingPanel from "@/components/RetrievedDocsFloatingPanel";
 import {
   createChatWebSocket,
   closeWebSocket,
@@ -315,7 +316,13 @@ export default function RepoWikiPage() {
     [owner, repo, repoType, localPath, repoUrl, token]
   );
 
+  type RagQueryDocs = {
+    rag_query: string;
+    docs: { file_path: string; score: number; text: string }[];
+  };
+
   // State variables
+  const [retrievedDocs, setRetrievedDocs] = useState<RagQueryDocs[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadingMessage, setLoadingMessage] = useState<string | undefined>(
     messages.loading?.initializing || "Initializing wiki generation..."
@@ -454,6 +461,10 @@ export default function RepoWikiPage() {
     Record<string, Message[]>
   >({});
   const [researchComplete, setResearchComplete] = useState(false);
+  const [embeddingProgress, setEmbeddingProgress] = useState<string | null>(
+    null
+  );
+
   // WebSocket reference
   const webSocketRef = useRef<WebSocket | null>(null);
   const conversationHistoryRef = useRef(pageConversationHistory);
@@ -875,6 +886,7 @@ Return ONLY valid JSON, no markdown formatting.`;
 
       const requestStartTime = Date.now();
       try {
+        /*
         const response = await fetch(`/api/chat/stream`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -896,6 +908,40 @@ Return ONLY valid JSON, no markdown formatting.`;
           if (done) break;
           responseText += decoder.decode(value, { stream: true });
         }
+        */
+        // Switch to WebSocket-based streaming
+        let responseText = await new Promise<string>((resolve, reject) => {
+          let accumulatedText = "";
+
+          createChatWebSocket(
+            requestBody,
+            (message: string) => {
+              try {
+                const parsed = JSON.parse(message);
+                if (parsed.type === "progress") {
+                  setLoadingMessage(parsed.message);
+                  if (
+                    parsed.message.includes("embed") ||
+                    parsed.message.includes("Embedding")
+                  ) {
+                    setEmbeddingProgress(parsed.message);
+                  }
+                  return; // Don't add to response text
+                }
+              } catch {
+                // Not JSON, treat as regular content
+              }
+              accumulatedText += message;
+            },
+            (error: Event) => {
+              console.error("WebSocket error in README analysis:", error);
+              reject(error);
+            },
+            () => {
+              resolve(accumulatedText);
+            }
+          );
+        });
 
         addPromptLog({
           source: "DeepAnalysis",
@@ -1688,8 +1734,8 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
               `continuePageResearch: Exiting: Page ${pageId} not Found. deepResearchEnabled:${deepResearchEnabled}, researchComplete: ${isComplete}, currentIteration: ${currentIter}, maxIterations: ${maxIterations}`
             );
 
-            setIsLoading(false);
-            setLoadingMessage(undefined);
+            // setIsLoading(false);
+            // setLoadingMessage(undefined);
             resolve();
             return;
           }
@@ -1709,6 +1755,7 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
             messages: newHistory,
             deep_research: true,
             max_iterations: maxIterations,
+            verbose_mode: true,
           };
 
           const finalProvider = params?.provider ?? selectedProviderState;
@@ -1776,9 +1823,7 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
               provider: finalProvider,
             };
 
-            console.log(
-              `existingIterations: ${existingIterations.length}`
-            );
+            console.log(`existingIterations: ${existingIterations.length}`);
             console.log(`newIteration: ${newIteration.iteration}`);
 
             // Store all iterations in the page
@@ -1827,8 +1872,8 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
               },
             }));
 
-            setIsLoading(false);
-            setLoadingMessage(undefined);
+            //setIsLoading(false);
+            //setLoadingMessage(undefined);
             cleanupPageState(pageId);
             resolve();
           };
@@ -1845,6 +1890,14 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
                 );
               } else if (parsed.type === "llm_prompt") {
                 let actualPrompt = parsed.content;
+              } else if (parsed.type === "rag_details") {
+                let retrieved_docs = parsed.results;
+                let query = parsed.query;
+
+                setRetrievedDocs((prev) => [
+                  ...prev,
+                  { rag_query: query, docs: retrieved_docs },
+                ]);
               }
               // If JSON, then the recieved data is control data and not to be included in the text
               return;
@@ -1904,6 +1957,8 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
               setResearchComplete(true);
               setCurrentIteration(0);
               console.log(`Stopping `);
+              setIsLoading(false);
+              setLoadingMessage(undefined);
             } else {
               // setLoadingMessage("Continuing next research iteration...");
               setTimeout(() => continuePageResearch(pageId, params), 2000);
@@ -2031,8 +2086,9 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
             repo_url: repoUrl,
             type: effectiveRepoInfo.type,
             messages: [{ role: "user", content: promptContent }],
-            deep_research,
-            max_iterations,
+            deep_research: deep_research,
+            max_iterations: max_iterations,
+            verbose_mode: true,
           };
 
           const finalProvider = params?.provider ?? selectedProviderState;
@@ -2079,6 +2135,14 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
                 // setLoadingMessage(
                 //   `Research iteration ${latestIteration} in progress...`
                 // );
+              } else if (parsed.type === "rag_details") {
+                let retrieved_docs = parsed.results;
+                let query = parsed.query;
+
+                setRetrievedDocs((prev) => [
+                  ...prev,
+                  { rag_query: query, docs: retrieved_docs },
+                ]);
               }
               // If JSON, then the recieved data is control data and not to be included in the text
               return;
@@ -2093,15 +2157,16 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
 
             // Get existing page data
             const existingPage = generatedPages[page.id] || {};
-            const existingIterations =
-              Array.isArray(existingPage.iterations) ? existingPage.iterations : [];
+            const existingIterations = Array.isArray(existingPage.iterations)
+              ? existingPage.iterations
+              : [];
 
             const iterationNumber =
               latestIterationRef.current > 0
                 ? latestIterationRef.current
                 : existingIterations.length + 1;
 
-              // Add current iteration
+            // Add current iteration
             const newIteration = {
               iteration: iterationNumber,
               content: completedContent, // Store raw iteration content
@@ -2125,7 +2190,7 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
               if (forceComplete && !isComplete) {
                 completedContent +=
                   "\n\n## Final Conclusion\nAfter multiple iterations, we’ve reached sufficient insights.";
-              }              
+              }
 
               setGeneratedPages((prev) => ({
                 ...prev,
@@ -2139,8 +2204,8 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
               if (forceComplete || isComplete) {
                 setResearchComplete(true);
                 setCurrentIteration(0);
-                setLoadingMessage(undefined);
-                setIsLoading(false);
+                //setLoadingMessage(undefined);
+                //setIsLoading(false);
               } else {
                 setLoadingMessage("Continuing next research iteration...");
                 setTimeout(() => {
@@ -2151,8 +2216,8 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
               setCurrentIteration(0);
               setLoadingMessage("Finalizing content...");
               setTimeout(() => {
-                setIsLoading(false);
-                setLoadingMessage(undefined);
+                //setIsLoading(false);
+                //setLoadingMessage(undefined);
               }, 600);
 
               setGeneratedPages((prev) => ({
@@ -2162,7 +2227,7 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
                   content: completedContent,
                 },
               }));
-            }           
+            }
 
             setPageAnalytics((prev) => ({
               ...prev,
@@ -2222,8 +2287,8 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
           }
         } catch (err) {
           console.error("Error in generatePageContent:", err);
-          setIsLoading(false);
-          setLoadingMessage(undefined);
+          //setIsLoading(false);
+          //setLoadingMessage(undefined);
           resolve();
         }
       });
@@ -2752,6 +2817,23 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
           await new Promise<void>((resolve, reject) => {
             // Handle incoming messages
             ws.onmessage = (event) => {
+              try {
+                const parsed = JSON.parse(event.data);
+
+                if (parsed.type === "progress") {
+                  // Handle embedding progress
+                  setLoadingMessage(parsed.message);
+                  if (
+                    parsed.message.includes("embed") ||
+                    parsed.message.includes("Embedding")
+                  ) {
+                    setEmbeddingProgress(parsed.message);
+                  }
+                  return; // Don't add to responseText for progress messages
+                }
+              } catch {
+                // Not JSON, treat as regular content
+              }
               responseText += event.data;
               structureTokenCount += event.data.length;
               setTextReceivedCount((prev) => prev + event.data.length);
@@ -4298,6 +4380,24 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
                   }}
                 />
               )}
+              {/* Embedding progress */}
+              {embeddingProgress && !currentGeneratingPageId && (
+                <div className="mt-4 p-3 bg-[var(--background)]/50 rounded-md border border-[var(--border-color)]">
+                  <div className="text-sm font-medium text-[var(--foreground)] mb-2">
+                    Embedding Progress
+                  </div>
+                  <div className="text-xs text-[var(--muted)] space-y-1">
+                    <div className="flex items-center space-x-2">
+                      <div className="animate-pulse flex space-x-1">
+                        <div className="h-2 w-2 bg-blue-500 rounded-full"></div>
+                        <div className="h-2 w-2 bg-blue-500 rounded-full"></div>
+                        <div className="h-2 w-2 bg-blue-500 rounded-full"></div>
+                      </div>
+                      <span>{embeddingProgress}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Deep Research iteration progress */}
               {deepResearchEnabled && currentIteration > 0 && (
@@ -4908,6 +5008,9 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
           <div className="flex-1 overflow-y-auto p-4">
             <Ask
               repoInfo={effectiveRepoInfo}
+              onRetrievedDocs={(newSet) =>
+                setRetrievedDocs((prev) => [...prev, newSet])
+              }
               provider={selectedProviderState}
               model={selectedModelState}
               isCustomModel={isCustomSelectedModelState}
@@ -4974,6 +5077,10 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
         }}
       />
       <PromptLogFloatingPanel />
+
+      {/*
+        <RetrievedDocsFloatingPanel retrievedSets={retrievedDocs} />
+      */}
     </div>
   );
 }

@@ -370,6 +370,7 @@ const Ask: React.FC<AskProps> = ({
         language: language,
         deep_research: deepResearch,
         max_iterations: 5,
+        verbose_mode: true
       };
 
       // Add tokens if available
@@ -704,6 +705,7 @@ const Ask: React.FC<AskProps> = ({
         language: language,
         deep_research: deepResearch,
         max_iterations: 5,
+        verbose_mode: true
       };
 
       // Add tokens if available

@@ -81,7 +81,61 @@ class ChatCompletionRequest(BaseModel):
 
 @app.post("/chat/completions/stream")
 async def chat_completions_stream(request: ChatCompletionRequest):
-    """Stream a chat completion response directly using Google Generative AI"""
+    """
+    Stream a chat completion response with support for multiple LLM providers and deep research mode.
+    This async function handles streaming chat completions with the following capabilities:
+    - Multi-provider support (Ollama, OpenRouter, OpenAI, AWS Bedrock, Azure AI, Google Generative AI)
+    - Retrieval-Augmented Generation (RAG) for context-aware responses
+    - Deep research mode with iterative refinement
+    - Conversation history management
+    - File content retrieval and context injection
+    - Token limit validation and graceful fallback handling
+    - Custom file filtering (excluded/included directories and files)
+    Args:
+        request (ChatCompletionRequest): The chat completion request containing:
+            - messages: List of chat messages with role and content
+            - provider: LLM provider name (ollama, openrouter, openai, bedrock, azure, google)
+            - model: Model identifier for the chosen provider
+            - repo_url: URL of the repository for RAG retrieval
+            - type: Repository type (e.g., github, gitlab)
+            - token: Authentication token for repository access
+            - language: Language code for responses (defaults to configured default)
+            - filePath: Optional specific file path to focus retrieval on
+            - deep_research: Boolean flag to enable iterative deep research mode
+            - max_iterations: Maximum iterations for deep research (default: 5)
+            - excluded_dirs: Newline-separated list of directories to exclude from RAG
+            - excluded_files: Newline-separated list of file patterns to exclude from RAG
+            - included_dirs: Newline-separated list of directories to include in RAG
+            - included_files: Newline-separated list of file patterns to include in RAG
+    Returns:
+        StreamingResponse: Server-sent event stream yielding text chunks of the model's response.
+            Each chunk is streamed as soon as available, enabling real-time response display.
+    Raises:
+        HTTPException: For various error conditions:
+            - 400: Missing messages or invalid message structure
+            - 500: RAG preparation failures, retrieval errors, or API failures
+    Processing Flow:
+        1. Validates input token count against model context window
+        2. Initializes RAG instance with specified repository and filters
+        3. Builds conversation history from message turns
+        4. Detects and handles deep research mode
+        5. Retrieves contextual documents from RAG (if input size permits)
+        6. Fetches file content if filePath specified
+        7. Constructs system prompt with context for selected provider
+        8. Calls appropriate provider's streaming API
+        9. Streams response chunks in real-time
+        10. Falls back to context-less retry if token limit exceeded
+    Error Handling:
+        - Token limit errors trigger automatic retry with simplified prompt
+        - API errors include helpful configuration reminders
+        - RAG failures with graceful degradation to unauthenticated responses
+        - Large input detection prevents unnecessary processing
+    Deep Research Mode:
+        Enables iterative refinement across multiple iterations (default 5).
+        Automatically detects iteration number from conversation history.
+        Uses specialized prompts for first, intermediate, and final iterations.
+        Supports continuation requests to extend research beyond initial query.
+    """
     try:
         # logger.debug(f"{request}")
         # Check if request contains very large input

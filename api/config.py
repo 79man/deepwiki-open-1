@@ -1,3 +1,10 @@
+from adalflow import GoogleGenAIClient  # , OllamaClient
+from api.my_ollama_client import MyOllamaClient
+from api.dashscope_client import DashscopeClient
+from api.azureai_client import AzureAIClient
+from api.bedrock_client import BedrockClient
+from api.openrouter_client import OpenRouterClient
+from api.openai_client import OpenAIClient
 import os
 import json
 import logging
@@ -7,13 +14,6 @@ from typing import List, Union, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-from api.openai_client import OpenAIClient
-from api.openrouter_client import OpenRouterClient
-from api.bedrock_client import BedrockClient
-from api.azureai_client import AzureAIClient
-from api.dashscope_client import DashscopeClient
-from adalflow import GoogleGenAIClient #, OllamaClient
-from api.my_ollama_client import MyOllamaClient
 
 # Get API keys from environment variables
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
@@ -59,6 +59,7 @@ CLIENT_CLASSES = {
     "DashscopeClient": DashscopeClient
 }
 
+
 def replace_env_placeholders(config: Union[Dict[str, Any], List[Any], str, Any]) -> Union[Dict[str, Any], List[Any], str, Any]:
     """
     Recursively replace placeholders like "${ENV_VAR}" in string values
@@ -90,6 +91,8 @@ def replace_env_placeholders(config: Union[Dict[str, Any], List[Any], str, Any])
         return config
 
 # Load JSON configuration file
+
+
 def load_json_config(filename):
     try:
         # If environment variable is set, use the directory specified by it
@@ -114,6 +117,8 @@ def load_json_config(filename):
         return {}
 
 # Load generator model configuration
+
+
 def load_generator_config():
     generator_config = load_json_config("generator.json")
 
@@ -136,11 +141,14 @@ def load_generator_config():
                 }
                 provider_config["model_client"] = default_map[provider_id]
             else:
-                logger.warning(f"Unknown provider or client class: {provider_id}")
+                logger.warning(
+                    f"Unknown provider or client class: {provider_id}")
 
     return generator_config
 
 # Load embedder configuration
+
+
 def load_embedder_config():
     embedder_config = load_json_config("embedder.json")
 
@@ -153,6 +161,7 @@ def load_embedder_config():
 
     return embedder_config
 
+
 def get_embedder_config():
     """
     Get the current embedder configuration.
@@ -161,6 +170,7 @@ def get_embedder_config():
         dict: The embedder configuration with model_client resolved
     """
     return configs.get("embedder", {})
+
 
 def is_ollama_embedder():
     """
@@ -176,19 +186,25 @@ def is_ollama_embedder():
     # Check if model_client is OllamaClient
     embedder_cls = embedder_config.get("model_client")
     if embedder_cls:
-        logger.info(f"Manoj: embedder_cls case {embedder_cls is CLIENT_CLASSES['OllamaClient']}")
+        logger.info(
+            f"Manoj: embedder_cls case {embedder_cls is CLIENT_CLASSES['OllamaClient']}")
         return embedder_cls is CLIENT_CLASSES["OllamaClient"]
 
     # Fallback: check client_class string
     client_class = embedder_config.get("client_class", "")
-    logger.info(f"Manoj: Fallback case {client_class} == {'OllamaClient'} ({client_class == 'OllamaClient'}) ")
+    logger.info(
+        f"Manoj: Fallback case {client_class} == {'OllamaClient'} ({client_class == 'OllamaClient'}) ")
     return client_class == "OllamaClient"
 
 # Load repository and file filters configuration
+
+
 def load_repo_config():
     return load_json_config("repo.json")
 
 # Load language configuration
+
+
 def load_lang_config():
     default_config = {
         "supported_languages": {
@@ -206,16 +222,19 @@ def load_lang_config():
         "default": "en"
     }
 
-    loaded_config = load_json_config("lang.json") # Let load_json_config handle path and loading
+    # Let load_json_config handle path and loading
+    loaded_config = load_json_config("lang.json")
 
     if not loaded_config:
         return default_config
 
     if "supported_languages" not in loaded_config or "default" not in loaded_config:
-        logger.warning("Language configuration file 'lang.json' is malformed. Using default language configuration.")
+        logger.warning(
+            "Language configuration file 'lang.json' is malformed. Using default language configuration.")
         return default_config
 
     return loaded_config
+
 
 # Default excluded directories and files
 DEFAULT_EXCLUDED_DIRS: List[str] = [
@@ -269,7 +288,8 @@ lang_config = load_lang_config()
 
 # Update configuration
 if generator_config:
-    configs["default_provider"] = generator_config.get("default_provider", "google")
+    configs["default_provider"] = generator_config.get(
+        "default_provider", "google")
     configs["providers"] = generator_config.get("providers", {})
 
 # Update embedder configuration
@@ -310,75 +330,82 @@ def get_model_config(provider="google", model=None):
 
     model_client = provider_config.get("model_client")
     if not model_client:
-        raise ValueError(f"Model client not specified for provider '{provider}'")
+        raise ValueError(
+            f"Model client not specified for provider '{provider}'")
 
     # If model not provided, use default model for the provider
     if not model:
         model = provider_config.get("default_model")
         if not model:
-            raise ValueError(f"No default model specified for provider '{provider}'")
+            raise ValueError(
+                f"No default model specified for provider '{provider}'")
 
     # Prepare base configuration
     result = {
         "model_client": model_client,
     }
 
-    # Provider-specific adjustments  
-    if provider == "ollama":  
-        # Ollama uses a slightly different parameter structure with nested "options"  
-        model_params = None  
-        
-        # Try to get model-specific parameters first  
-        if model in provider_config.get("models", {}):  
-            model_params = provider_config["models"][model]  
-        elif "default_params" in provider_config:  
-            # Use provider-level default_params if available  
-            model_params = provider_config["default_params"]  
-        else:  
-            # Final fallback to hardcoded defaults  
-            result["model_kwargs"] = {  
-                "model": model,  
-                "temperature": 0.7,  
-                "top_p": 0.8,  
-                "num_ctx": 8192  
-            }  
-            return result  
-        
-        # Extract options from the found parameters  
-        if model_params and "options" in model_params:  
-            result["model_kwargs"] = {"model": model, **model_params["options"]}  
-        else:  
-            result["model_kwargs"] = {"model": model}  
-            
-    else:  
-        # Standard structure for other providers  
-        model_params = {}  
-        if model in provider_config.get("models", {}):  
-            model_params = provider_config["models"][model]  
-        else:  
-            default_model = provider_config.get("default_model")  
-            if default_model and default_model in provider_config.get("models", {}):  
-                model_params = provider_config["models"][default_model]  
-        
+    # Provider-specific adjustments
+    if provider == "ollama":
+        # Ollama uses a slightly different parameter structure with nested "options"
+        model_params = None
+
+        # Try to get model-specific parameters first
+        if model in provider_config.get("models", {}):
+            model_params = provider_config["models"][model]
+        elif "default_params" in provider_config:
+            # Use provider-level default_params if available
+            model_params = provider_config["default_params"]
+        else:
+            # Final fallback to hardcoded defaults
+            result["model_kwargs"] = {
+                "model": model,
+                "options:": {
+                    "temperature": 0.7,
+                    "top_p": 0.8,
+                    "num_ctx": 8192
+                }
+            }
+            return result
+
+        # Extract options from the found parameters
+        result["model_kwargs"] = {"model": model}
+        if model_params and "options" in model_params:
+            result["model_kwargs"]["options"] = model_params["options"]
+
+    else:
+        # Standard structure for other providers
+        model_params = {}
+        if model in provider_config.get("models", {}):
+            model_params = provider_config["models"][model]
+        else:
+            default_model = provider_config.get("default_model")
+            if default_model and default_model in provider_config.get("models", {}):
+                model_params = provider_config["models"][default_model]
+
         result["model_kwargs"] = {"model": model, **model_params}
 
     return result
 
-def get_context_window_size(provider: str, model: str) -> int:  
-    """Get the context window size for a given provider/model."""  
-    model_config = get_model_config(provider, model)  
-      
-    # For Ollama, use num_ctx from model_kwargs  
-    if provider == "ollama":  
-        return model_config["model_kwargs"].get("num_ctx", 8000)  
-      
-    # For other providers, define defaults or read from config  
-    context_windows = {  
-        "google": 1000000,  # Gemini 2.0 Flash  
-        "openai": 128000,   # GPT-4  
-        "openrouter": 128000,  # Varies by model  
-        "bedrock": 200000,  # Claude 3.5  
-        "azure": 128000,  
-    }  
-      
+
+def get_context_window_size(provider: str, model: str) -> int:
+    """Get the context window size for a given provider/model."""
+    model_config = get_model_config(provider, model)
+
+    # For Ollama, use num_ctx from model_kwargs
+    if provider == "ollama":
+        if "options" in model_config["model_kwargs"]:
+            return model_config["model_kwargs"]["options"].get("num_ctx", 8192)
+        else:
+            return model_config["model_kwargs"].get("num_ctx", 8000)
+
+    # For other providers, define defaults or read from config
+    context_windows = {
+        "google": 1000000,  # Gemini 2.0 Flash
+        "openai": 128000,   # GPT-4
+        "openrouter": 128000,  # Varies by model
+        "bedrock": 200000,  # Claude 3.5
+        "azure": 128000,
+    }
+
     return context_windows.get(provider, 8000)
