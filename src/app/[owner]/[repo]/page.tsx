@@ -80,7 +80,7 @@ type ReadmeContent = string | ReadmeAnalysis;
 
 interface RepoBasicAnalysis {
   type: string;
-  primaryLanguage: string;
+  languageCounts: Record<string, number>;
   framework: string;
   architecturePattern: string;
   complexityScore: number;
@@ -803,7 +803,7 @@ export default function RepoWikiPage() {
       let deepAnalysisPrompt = `You are analyzing the ${owner}/${repo} codebase to understand its core architecture and domain.  
   
 BASIC ANALYSIS (from heuristics):  
-- Primary Language: ${basicAnalysis.primaryLanguage}  
+- Languages Found: ${Object.keys(basicAnalysis.languageCounts).join(", ")}
 - Framework: ${basicAnalysis.framework}  
 - Architecture: ${basicAnalysis.architecturePattern}  
 - Complexity: ${basicAnalysis.complexityScore}/10  
@@ -886,50 +886,27 @@ Return ONLY valid JSON, no markdown formatting.`;
 
       const requestStartTime = Date.now();
       try {
-        /*
-        const response = await fetch(`/api/chat/stream`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(requestBody),
-        });
-
-        if (!response.ok) {
-          throw new Error(`Deep analysis failed: ${response.status}`);
-        }
-
-        let responseText = "";
-        const reader = response.body?.getReader();
-        const decoder = new TextDecoder();
-
-        if (!reader) throw new Error("Failed to get response reader");
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          responseText += decoder.decode(value, { stream: true });
-        }
-        */
-        // Switch to WebSocket-based streaming
         let responseText = await new Promise<string>((resolve, reject) => {
           let accumulatedText = "";
 
           createChatWebSocket(
             requestBody,
-            (message: string) => {
-              try {
-                const parsed = JSON.parse(message);
-                if (parsed.type === "progress") {
-                  setLoadingMessage(parsed.message);
-                  if (
-                    parsed.message.includes("embed") ||
-                    parsed.message.includes("Embedding")
-                  ) {
-                    setEmbeddingProgress(parsed.message);
+            (message: string | Blob /*same as event.data*/) => {
+              if (message instanceof Blob) {
+                message.text().then((text) => {
+                  const controlData = JSON.parse(text);
+                  if (controlData.type === "progress") {
+                    setLoadingMessage(controlData.message);
+                    if (
+                      controlData.message.includes("embed") ||
+                      controlData.message.includes("Embedding")
+                    ) {
+                      setEmbeddingProgress(controlData.message);
+                    }
                   }
-                  return; // Don't add to response text
-                }
-              } catch {
-                // Not JSON, treat as regular content
+                  // process other control messages if needed
+                });
+                return; // Skip further processing for Control messages
               }
               accumulatedText += message;
             },
@@ -975,6 +952,7 @@ Return ONLY valid JSON, no markdown formatting.`;
             }
           } catch (parseError) {
             console.error("Failed to parse deep analysis JSON:", parseError);
+            console.error("Culprit Deep analysis response text:", responseText);
             return null;
           }
         }
@@ -1059,7 +1037,7 @@ ${deepAnalysis.documentation_priorities.join("\n- ")}`;
     } repository ${owner}/${repo} and create a DOMAIN-AWARE wiki structure.  
   
 Repository Analysis:  
-- Primary Language: ${basicAnalysis.primaryLanguage}  
+- Languages Found: ${Object.keys(basicAnalysis.languageCounts).join(", ")} 
 - Framework: ${basicAnalysis.framework}  
 - Architecture Pattern: ${basicAnalysis.architecturePattern}  
 - Complexity Score: ${basicAnalysis.complexityScore}/10  
@@ -1878,30 +1856,31 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
             resolve();
           };
 
-          const handleMessage = (data: string) => {
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed.type === "iteration_status") {
-                setCurrentIteration(parsed.current_iteration || 0);
-                console.log(
-                  `Research iteration ${parsed.current_iteration} ${
-                    parsed.status || "in_progress"
-                  }`
-                );
-              } else if (parsed.type === "llm_prompt") {
-                let actualPrompt = parsed.content;
-              } else if (parsed.type === "rag_details") {
-                let retrieved_docs = parsed.results;
-                let query = parsed.query;
+          const handleMessage = (data: string | Blob) => {
+            if (data instanceof Blob) {
+              data.text().then((text) => {
+                const controlData = JSON.parse(text);
+                if (controlData.type === "iteration_status") {
+                  setCurrentIteration(controlData.current_iteration || 0);
+                  console.log(
+                    `Research iteration ${controlData.current_iteration} ${
+                      controlData.status || "in_progress"
+                    }`
+                  );
+                } else if (controlData.type === "llm_prompt") {
+                  let actualPrompt = controlData.content;
+                } else if (controlData.type === "rag_details") {
+                  let retrieved_docs = controlData.results;
+                  let query = controlData.query;
 
-                setRetrievedDocs((prev) => [
-                  ...prev,
-                  { rag_query: query, docs: retrieved_docs },
-                ]);
-              }
-              // If JSON, then the recieved data is control data and not to be included in the text
-              return;
-            } catch {}
+                  setRetrievedDocs((prev) => [
+                    ...prev,
+                    { rag_query: query, docs: retrieved_docs },
+                  ]);
+                }
+              });
+              return; // Skip further processing for Blob
+            }
             pageTokenCount += data.length;
             setPageTextReceivedCount(pageTokenCount);
             setPageElapsedTime(Math.floor((Date.now() - pageStartTime) / 1000));
@@ -2063,6 +2042,8 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
             return;
           }
 
+          // console.log("B4 generating PageContent object:", page.id||"unknownId", page.title||"unknownTitle", page.filePaths||"filePathsMissing");
+
           // 🚀 Initial state setup
           activeContentRequests.set(page.id, true);
           setPagesInProgress((prev) => new Set(prev).add(page.id));
@@ -2125,28 +2106,31 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
           setPageTextReceivedCount(0);
           setPageElapsedTime(0);
 
-          const handleMessage = (data: string) => {
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed.type === "iteration_status") {
-                latestIteration = parsed.current_iteration || 0;
-                latestIterationRef.current = latestIteration;
-                setCurrentIteration(latestIteration);
-                // setLoadingMessage(
-                //   `Research iteration ${latestIteration} in progress...`
-                // );
-              } else if (parsed.type === "rag_details") {
-                let retrieved_docs = parsed.results;
-                let query = parsed.query;
+          const handleMessage = (data: string | Blob) => {
+            if (data instanceof Blob) {
+              data.text().then((text) => {
+                console.log("Received Blob data:", text);
 
-                setRetrievedDocs((prev) => [
-                  ...prev,
-                  { rag_query: query, docs: retrieved_docs },
-                ]);
-              }
-              // If JSON, then the recieved data is control data and not to be included in the text
+                const controlData = JSON.parse(text);
+                if (controlData.type === "iteration_status") {
+                  latestIteration = controlData.current_iteration || 0;
+                  latestIterationRef.current = latestIteration;
+                  setCurrentIteration(latestIteration);
+                  // setLoadingMessage(
+                  //   `Research iteration ${latestIteration} in progress...`
+                  // );
+                } else if (controlData.type === "rag_details") {
+                  let retrieved_docs = controlData.results;
+                  let query = controlData.query;
+
+                  setRetrievedDocs((prev) => [
+                    ...prev,
+                    { rag_query: query, docs: retrieved_docs },
+                  ]);
+                }
+              });
               return;
-            } catch {}
+            }
             content += data;
             pageTokenCount += data.length;
             setPageTextReceivedCount((prev) => prev + data.length);
@@ -2477,20 +2461,20 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
       ".rb": "Ruby",
     };
 
-    const langCounts: Record<string, number> = {};
+    const languageCounts: Record<string, number> = {};
     files.forEach((file) => {
       const ext = file.substring(file.lastIndexOf("."));
       const lang = languageExtensions[ext];
       if (lang) {
-        langCounts[lang] = (langCounts[lang] || 0) + 1;
+        languageCounts[lang] = (languageCounts[lang] || 0) + 1;
       }
     });
 
-    console.log("langCounts:", langCounts);
+    console.log("languageCounts:", languageCounts);
 
-    const primaryLanguage =
-      Object.entries(langCounts).sort(([, a], [, b]) => b - a)[0]?.[0] ||
-      "Unknown";
+    // const primaryLanguage =
+    //   Object.entries(langCounts).sort(([, a], [, b]) => b - a)[0]?.[0] ||
+    //   "Unknown";
 
     // Detect framework
     let framework = "Unknown";
@@ -2586,7 +2570,7 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
 
     return {
       type,
-      primaryLanguage,
+      languageCounts,
       framework,
       architecturePattern,
       complexityScore,
@@ -2744,6 +2728,8 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
               content: finalPrompt,
             },
           ],
+          // deep_research: false,
+          // verbose_mode: true,
         };
 
         // Add tokens if available
@@ -2817,22 +2803,21 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
           await new Promise<void>((resolve, reject) => {
             // Handle incoming messages
             ws.onmessage = (event) => {
-              try {
-                const parsed = JSON.parse(event.data);
-
-                if (parsed.type === "progress") {
-                  // Handle embedding progress
-                  setLoadingMessage(parsed.message);
-                  if (
-                    parsed.message.includes("embed") ||
-                    parsed.message.includes("Embedding")
-                  ) {
-                    setEmbeddingProgress(parsed.message);
+              if (event.data instanceof Blob) {
+                event.data.text().then((text) => {
+                  const controlData = JSON.parse(text);
+                  if (controlData.type === "progress") {
+                    // Handle embedding progress
+                    setLoadingMessage(controlData.message);
+                    if (
+                      controlData.message.includes("embed") ||
+                      controlData.message.includes("Embedding")
+                    ) {
+                      setEmbeddingProgress(controlData.message);
+                    }
                   }
-                  return; // Don't add to responseText for progress messages
-                }
-              } catch {
-                // Not JSON, treat as regular content
+                });
+                return;
               }
               responseText += event.data;
               structureTokenCount += event.data.length;
@@ -2911,7 +2896,7 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
         }
 
         // Add your debug line here:
-        // console.log('Full AI response:', responseText);
+        console.log("Full AI response:", responseText);
         // Clean up markdown delimiters
         const cleanedResponseText = responseText
           .replace(/^```(?:xml)?\s*/i, "")
@@ -4724,7 +4709,9 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
                                     </div>
                                     <div>
                                       Tokens:{" "}
-                                      {analytics.tokensReceived.toLocaleString()}
+                                      {(
+                                        analytics.tokensReceived || 0
+                                      ).toLocaleString()}
                                     </div>
                                     <div>
                                       Time:{" "}

@@ -12,8 +12,14 @@ def get_embedder() -> adal.Embedder:
         model_client = model_client_class(**embedder_config["initialize_kwargs"])
     else:
         model_client = model_client_class()
+    
     embedder = adal.Embedder(
         model_client=model_client,
         model_kwargs=embedder_config["model_kwargs"],
     )
+
+    # Set batch_size as an attribute if available (not a constructor parameter)
+    if "batch_size" in embedder_config:
+        embedder.batch_size = embedder_config["batch_size"]
+
     return embedder

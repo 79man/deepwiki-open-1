@@ -48,7 +48,7 @@ export interface ChatCompletionRequest {
  */
 export const createChatWebSocket = (
   request: ChatCompletionRequest,
-  onMessage: (message: string) => void,
+  onMessage: (message: string | Blob) => void,
   onError: (error: Event) => void,
   onClose: () => void
 ): Promise<WebSocket> => {

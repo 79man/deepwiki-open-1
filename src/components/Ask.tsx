@@ -370,7 +370,7 @@ const Ask: React.FC<AskProps> = ({
         language: language,
         deep_research: deepResearch,
         max_iterations: 5,
-        verbose_mode: true
+        verbose_mode: true,
       };
 
       // Add tokens if available
@@ -388,20 +388,17 @@ const Ask: React.FC<AskProps> = ({
       webSocketRef.current = await createChatWebSocket(
         requestBody,
         // Message handler
-        (message: string) => {
-          try {
-            // filter out iteration counter messages
-            const parsed = JSON.parse(message);
-            if (parsed.type === "iteration_status") {
-              const latestIteration = parsed.current_iteration || 0;
-              console.log(`latestIteration: ${latestIteration}`);
-              // setLoadingMessage(
-              //   `Research iteration ${latestIteration} in progress...`
-              // );
-            }
-            // If JSON, then the recieved data is control data and not to be included in the text
+        (message: string | Blob) => {
+          if (message instanceof Blob) {
+            message.text().then((text) => {
+              const controlData = JSON.parse(text);
+              if (controlData.type === "iteration_status") {
+                const latestIteration = controlData.current_iteration || 0;
+                console.log(`latestIteration: ${latestIteration}`);
+              }
+            });
             return;
-          } catch {}
+          }
           fullResponse += message;
           setResponse(fullResponse);
 
@@ -705,7 +702,7 @@ const Ask: React.FC<AskProps> = ({
         language: language,
         deep_research: deepResearch,
         max_iterations: 5,
-        verbose_mode: true
+        verbose_mode: true,
       };
 
       // Add tokens if available
@@ -723,18 +720,17 @@ const Ask: React.FC<AskProps> = ({
       webSocketRef.current = await createChatWebSocket(
         requestBody,
         // Message handler
-        (message: string) => {
-          try {
-            const data = JSON.parse(message);
-            if (data.type === "iteration_status") {
-              console.log(
-                `RCV: iteration: ${data.current_iteration}, status: ${data.status}`
-              );
-            }
-            // If JSON, then the recieved data is control data and not to be included in the text
+        (message: string | Blob) => {
+          if (message instanceof Blob) {
+            message.text().then((text) => {
+              const controlData = JSON.parse(text);
+              if (controlData.type === "iteration_status") {
+                console.log(
+                  `RCV: iteration: ${controlData.current_iteration}, status: ${controlData.status}`
+                );
+              }
+            });
             return;
-          } catch {
-            // Not JSON, treat as regular content
           }
           fullResponse += message;
           setResponse(fullResponse);

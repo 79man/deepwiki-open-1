@@ -4,8 +4,7 @@ from api.config import configs
 from adalflow.components.retriever.faiss_retriever import FAISSRetriever
 import logging
 import weakref
-import re
-from typing import Any, List, Tuple, Dict
+from typing import List, Tuple, Dict
 from uuid import uuid4
 
 import adalflow as adal
@@ -207,9 +206,9 @@ class RAG(adal.Component):
             from api.ollama_patch import check_ollama_model_exists
             from api.config import get_embedder_config
 
-            embedder_config = get_embedder_config()
-            if embedder_config and embedder_config.get("model_kwargs", {}).get("model"):
-                model_name = embedder_config["model_kwargs"]["model"]
+            self.embedder_config = get_embedder_config()
+            if self.embedder_config and self.embedder_config.get("model_kwargs", {}).get("model"):
+                model_name = self.embedder_config["model_kwargs"]["model"]
                 if not check_ollama_model_exists(model_name):
                     raise Exception(
                         f"Ollama model '{model_name}' not found. Please run 'ollama pull {model_name}' to install it.")
@@ -236,6 +235,8 @@ class RAG(adal.Component):
 
         # Use single string embedder for Ollama, regular embedder for others
         self.query_embedder = single_string_embedder if self.is_ollama_embedder else self.embedder
+        # logger.debug(
+        #     f"RAG initialized with provider={self.provider}, model={self.model}, is_ollama_embedder={self.is_ollama_embedder}, query_embedder={self.query_embedder}")
 
         self.initialize_db_manager()
 
@@ -245,6 +246,9 @@ class RAG(adal.Component):
             return_data_class=True,
             format_type="json"
         )
+
+        # logger.debug(
+        #     f"RAG DataClassParser initialized, output_fomat: {data_parser.get_output_format_str()}")
 
         # Format instructions to ensure proper output structure
         format_instructions = data_parser.get_output_format_str() + """
@@ -264,8 +268,12 @@ IMPORTANT FORMATTING RULES:
         from api.config import get_model_config
         generator_config = get_model_config(self.provider, self.model)
 
+        # logger.debug(f"RAG generator config: {generator_config}")
+
         # Set up the main generator
         self.generator = adal.Generator(
+            model_client=generator_config["model_client"](),
+            model_kwargs=generator_config["model_kwargs"],
             template=RAG_TEMPLATE,
             prompt_kwargs={
                 "output_format_str": format_instructions,
@@ -273,9 +281,8 @@ IMPORTANT FORMATTING RULES:
                 "system_prompt": system_prompt,
                 "contexts": None,
             },
-            model_client=generator_config["model_client"](),
-            model_kwargs=generator_config["model_kwargs"],
             output_processors=data_parser,
+            name="RAG_Generator"
         )
 
     def initialize_db_manager(self):
@@ -509,7 +516,10 @@ IMPORTANT FORMATTING RULES:
 
         # Call your answer generator (use the model/generator configured, e.g. OpenAI, Ollama, etc.)
         # Here, it's assumed you have self.generator that outputs text answer (already set up with a template)
-        result = self.generator({"input_str": prompt})
+        input_str_dict = {"input_str": prompt}
+        # logger.info(
+        #     f'RAG prompt for build answer:\n {self.generator.get_prompt(**input_str_dict)}')
+        result = self.generator(input_str_dict)
 
         # Extract generated answer and rationale
         if hasattr(result, "rationale") and hasattr(result, "answer"):
@@ -526,19 +536,46 @@ IMPORTANT FORMATTING RULES:
         # Return as RAGAnswer dataclass
         return RAGAnswer(rationale=rationale, answer=answer)
 
-    def call(self, query: str, language: str = "en") -> Tuple[RAGAnswer, List]:
+    # Tuple[RAGAnswer, List]:
+    def call(self, query: str, language: str = "en") -> List:
         """
-        Process a query using RAG.
-
-        Args:
-            query: The user's query
-
-        Returns:
-            Tuple of (RAGAnswer, retrieved_documents)
+        Process a query using Retrieval-Augmented Generation (RAG).
+        Retrieves relevant documents from the knowledge base based on the input query,
+        truncating if necessary to fit embedding model constraints, and returns the
+        retrieved documents with their content populated.
+            query (str): The user's query to process and retrieve relevant documents for.
+            language (str, optional): The language of the query. Defaults to "en" (English).
+            List: A list of retrieved document objects with populated document content.
+                  Each object contains doc_indices and corresponding documents from
+                  the transformed_docs collection. Returns an empty list on error.
+        Raises:
+            Handles exceptions internally by logging errors and returning an empty list
+            rather than raising exceptions to the caller.
+        Note:
+            - Queries longer than max_query_size are truncated with a warning logged.
+            - max_query_size is adjusted for Ollama embedders based on num_ctx config.
+            - Default max_query_size is 7500 characters for other embedders.
         """
         try:
-            retrieved_documents = self.retriever(query)
-            logger.info(f"Rag retrieved docs: {retrieved_documents}")
+            # Check if query needs chunking
+            max_query_size = 2048  # Default max size for most embedders
+            # Use smaller limit for embedding models (especially Ollama)
+            if self.is_ollama_embedder:
+                if self.embedder_config:
+                    max_query_size = self.embedder_config.get("num_ctx", max_query_size)
+
+            # Simple truncation to 5000 characters
+            if len(query) > max_query_size:
+                truncated_query = query[:max_query_size]
+                logger.warning(
+                    f"Query truncated from {len(query)} to {max_query_size} characters")
+                query = truncated_query
+
+            retrieved_documents: List = self.retriever(query)
+
+            # retrieved_documents: List = self.retriever(query)
+            logger.info(
+                f"Rag retrieved docs: {retrieved_documents[0].doc_indices}")
 
             # Fill in the documents
             retrieved_documents[0].documents = [
@@ -546,16 +583,20 @@ IMPORTANT FORMATTING RULES:
                 for doc_index in retrieved_documents[0].doc_indices
             ]
 
+            # logger.info(f"Rag retrieved filled docs: {retrieved_documents[0].documents}")
+
             # Build the answer object using your template/model
-            rag_answer = self._build_rag_answer(query, retrieved_documents)
-            return rag_answer, retrieved_documents
+            # rag_answer = self._build_rag_answer(query, retrieved_documents)
+            # return rag_answer, retrieved_documents
+            return retrieved_documents
 
         except Exception as e:
             logger.error(f"Error in RAG call: {str(e)}")
 
             # Create error response
-            error_response = RAGAnswer(
-                rationale="Error occurred while processing the query.",
-                answer=f"I apologize, but I encountered an error while processing your question. Please try again or rephrase your question."
-            )
-            return error_response, []
+            # error_response = RAGAnswer(
+            #     rationale="Error occurred while processing the query.",
+            #     answer=f"I apologize, but I encountered an error while processing your question. Please try again or rephrase your question."
+            # )
+            # return error_response, []
+            return []

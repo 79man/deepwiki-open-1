@@ -151,18 +151,18 @@ def parse_chat_messsage(completion: Dict[str, Any]) -> "GeneratorOutput":
 def _truncate_api_kwargs(api_kwargs: dict) -> dict:
     """
     Create a copy of api_kwargs with truncated messages for logging purposes.
-    
+
     Truncates the 'content' field of each message to 200 characters if it exceeds
     that length, appending '...[truncated]' to indicate the truncation.
-    
+
     Args:
         api_kwargs (dict): A dictionary containing API keyword arguments, 
                           potentially including a 'messages' key with a list of message objects.
-    
+
     Returns:
         dict: A shallow copy of api_kwargs with truncated message content for logging.
               Original api_kwargs remains unchanged.
-    
+
     Example:
         >>> api_kwargs = {
         ...     'messages': [
@@ -180,9 +180,18 @@ def _truncate_api_kwargs(api_kwargs: dict) -> dict:
             truncated_msg = msg.copy()
             if 'content' in truncated_msg and len(truncated_msg['content']) > 200:
                 truncated_msg['content'] = truncated_msg['content'][:200] + \
-                    '...[truncated]'
+                    f'...[truncated] ({len(truncated_msg["content"])} chars)'
             truncated_messages.append(truncated_msg)
         truncated['messages'] = truncated_messages
+
+    if 'prompt' in truncated:
+        # print first 200 \n\n ... \n\n last 200 chars
+        truncated_prompt = truncated['prompt']
+
+        if len(truncated_prompt) > 200:
+            truncated_prompt = f"{truncated['prompt'][:200]}\n\n...\n\n{truncated['prompt'][-200:]} ({len(truncated['prompt'])} chars)"
+
+        truncated['prompt'] = truncated_prompt
     return truncated
 
 
@@ -455,7 +464,8 @@ class MyOllamaClient(ModelClient):
         model_kwargs: Dict = {},
         model_type: ModelType = ModelType.UNDEFINED,
     ) -> Dict:
-        logger.info(f"Invoked convert_inputs_to_api_kwargs({_truncate_api_kwargs(model_kwargs)}, {model_type})")
+        logger.debug(
+            f"Invoked convert_inputs_to_api_kwargs({_truncate_api_kwargs(model_kwargs)}, {model_type})")
         r"""Convert the input and model_kwargs to api_kwargs for the Ollama SDK client."""
         # TODO: ollama will support batch embedding in the future: https://ollama.com/blog/embedding-models
         self.generate = False  # reset generate to False
@@ -473,10 +483,9 @@ class MyOllamaClient(ModelClient):
                 del final_model_kwargs["num_ctx"]
 
             # logger.info(f"Manoj: final_model_kwargs: {final_model_kwargs}")
-            logger.info(
-                f"Manoj: final_model_kwargs:\n{_truncate_api_kwargs(final_model_kwargs)})")
-            logger.info(
-                f"Manoj: len(input): {len(input) if input else 'None'}")
+            logger.debug(
+                f"Manoj: final_model_kwargs:{_truncate_api_kwargs(final_model_kwargs)}), len(input): {len(input) if input else 'None'}")
+
             if isinstance(input, str):
                 final_model_kwargs["prompt"] = input
                 return final_model_kwargs
@@ -519,7 +528,8 @@ class MyOllamaClient(ModelClient):
     def call(self, api_kwargs: Dict = {}, model_type: ModelType = ModelType.UNDEFINED):
         if "model" not in api_kwargs:
             raise ValueError("model must be specified")
-        # log.info(f"Modified Ollama Client api_kwargs: {api_kwargs}")
+        log.debug(
+            f"Modified Ollama Client api_kwargs: {_truncate_api_kwargs(api_kwargs)}")
         if not self.sync_client:
             self.init_sync_client()
         if self.sync_client is None:
@@ -590,13 +600,13 @@ class MyOllamaClient(ModelClient):
             if "generate" in api_kwargs and api_kwargs["generate"]:
                 # remove generate from api_kwargs
                 api_kwargs.pop("generate")
-                logger.info(
+                logger.debug(
                     f"Calling generate chat(api_kwargs:\n{_truncate_api_kwargs(api_kwargs)})")
 
                 return await self.async_client.generate(**api_kwargs)
             else:
                 # logger.info(f"Calling chat(api_kwargs:\n{api_kwargs})")
-                logger.info(
+                logger.debug(
                     f"Calling chat(api_kwargs:\n{_truncate_api_kwargs(api_kwargs)})")
 
                 return await self.async_client.chat(**api_kwargs)
@@ -604,7 +614,7 @@ class MyOllamaClient(ModelClient):
             raise ValueError(f"model_type {model_type} is not supported")
 
     @classmethod
-    def from_dict(cls: Type["OllamaClient"], data: Dict[str, Any]) -> "OllamaClient":
+    def from_dict(cls: Type["MyOllamaClient"], data: Dict[str, Any]) -> "MyOllamaClient":
         obj = super().from_dict(data)
         # recreate the existing clients
         obj.sync_client = obj.init_sync_client()

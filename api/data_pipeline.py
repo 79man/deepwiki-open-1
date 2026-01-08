@@ -389,21 +389,21 @@ def prepare_data_pipeline(is_ollama_embedder: bool = False):
 
     embedder = get_embedder()
 
-    # if is_ollama_embedder:
-    #     # Use Ollama document processor for single-document processing
-    #     embedder_transformer = OllamaDocumentProcessor(embedder=embedder)
-    # else:
-    #     # Use batch processing for other embedders
-    #     batch_size = embedder_config.get("batch_size", 500)
-    #     embedder_transformer = ToEmbeddings(
-    #         embedder=embedder, batch_size=batch_size
-    #     )
+    if is_ollama_embedder:
+        # Use Ollama document processor for single-document processing
+        embedder_transformer = OllamaDocumentProcessor(embedder=embedder)
+    else:
+        # Use batch processing for other embedders
+        batch_size = embedder_config.get("batch_size", 500)
+        embedder_transformer = ToEmbeddings(
+            embedder=embedder, batch_size=batch_size
+        )
     # Manoj: Use batch processing for all embedders including Ollama
     # Use batch processing for other embedders
-    batch_size = embedder_config.get("batch_size", 500)
-    embedder_transformer = ToEmbeddings(
-        embedder=embedder, batch_size=batch_size
-    )
+    # batch_size = embedder_config.get("batch_size", 500)
+    # embedder_transformer = ToEmbeddings(
+    #     embedder=embedder, batch_size=batch_size
+    # )
 
     data_transformer = adal.Sequential(
         splitter, embedder_transformer

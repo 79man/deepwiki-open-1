@@ -112,6 +112,29 @@ def _truncate_api_kwargs(api_kwargs: dict) -> dict:
     return truncated
 
 
+async def send_blob(ws: WebSocket, payload: Dict[str, Any]) -> None:
+    """
+    Args:
+        ws (WebSocket): The WebSocket connection to send data through.
+        payload (Dict[str, Any]): A dictionary containing the data to be serialized
+            and sent as JSON over the WebSocket connection.
+
+    Returns:
+        None
+
+    Raises:
+        WebSocketException: If the WebSocket connection is closed or disconnected
+            before the data can be sent.
+        json.JSONDecodeError: If the payload cannot be serialized to JSON.
+
+    Example:
+        >>> payload = {"message": "Hello", "id": 123}
+        >>> await send_blob(websocket, payload)
+    """
+    binary_data = json.dumps(payload).encode('utf-8')
+    await ws.send_bytes(binary_data)
+
+
 async def handle_websocket_chat(websocket: WebSocket):
     """
     Handle WebSocket connection for chat completions.
@@ -126,11 +149,21 @@ async def handle_websocket_chat(websocket: WebSocket):
 
         # Create progress callback
         async def send_progress(message: str):
-            await websocket.send_json({
+            payload = {
                 "type": "progress",
                 "message": message,
                 "timestamp": datetime.now().isoformat()
-            })
+            }
+            await send_blob(websocket, payload)
+
+            # Send as binary (bytes) to distinguish from text stream
+            # binary_data = json.dumps(payload).encode('utf-8')
+            # await websocket.send_bytes(binary_data)
+            # await websocket.send_json({
+            #     "type": "progress",
+            #     "message": message,
+            #     "timestamp": datetime.now().isoformat()
+            # })
 
         # Check if request contains very large input
         input_too_large = False
@@ -328,8 +361,13 @@ async def handle_websocket_chat(websocket: WebSocket):
                 # Try to perform RAG retrieval
                 try:
                     # This will use the actual RAG implementation
-                    logger.info(f"RAG Query: {rag_query}")
-                    rag_answer, retrieved_documents = request_rag(
+                    # logger.info(f"RAG Query: {rag_query}")
+                    logger.info(f"RAG Query(len={len(rag_query)}): {rag_query[:100]}\n\n...\n\n{rag_query[-100:]}" if len(
+                        rag_query) > 200 else f"RAG Query: {rag_query}")
+
+                    # rag_answer, retrieved_documents = request_rag(
+                    #     query=rag_query, language=request.language)
+                    retrieved_documents = request_rag(
                         query=rag_query, language=request.language)
 
                     if retrieved_documents and retrieved_documents[0].documents:
@@ -373,7 +411,7 @@ async def handle_websocket_chat(websocket: WebSocket):
                             10 + "\n\n".join(context_parts)
                     else:
                         logger.warning(
-                            f"No documents retrieved from RAG: {rag_answer}")
+                            f"No documents retrieved from RAG")
                 except Exception as e:
                     logger.error(f"Error in RAG retrieval: {str(e)}")
                     # Continue without RAG if there's an error
@@ -384,12 +422,18 @@ async def handle_websocket_chat(websocket: WebSocket):
 
         # Send the Rag Query and RAG results back to the client
         if is_verbose:
-            await websocket.send_text(json.dumps({
+            await send_blob(websocket, {
                 "type": "rag_details",
                 "query": rag_query,
                 "retrieved": retrieved_documents_count,
                 "results": context_text
-            }))
+            })
+            # await websocket.send_text(json.dumps({
+            #     "type": "rag_details",
+            #     "query": rag_query,
+            #     "retrieved": retrieved_documents_count,
+            #     "results": context_text
+            # }))
         # Get repository information
         repo_url = request.repo_url
         repo_name = repo_url.split("/")[-1] if "/" in repo_url else repo_url
@@ -611,16 +655,23 @@ async def handle_websocket_chat(websocket: WebSocket):
             )
 
         # Send iteration status update
-        if is_deep_research:
-            status_message = json.dumps({
+        if is_deep_research and is_verbose:
+            await send_blob(websocket, {
                 "type": "iteration_status",
                 "current_iteration": research_iteration,
                 "max_iterations": request.max_iterations or 5,
                 "status": "in_progress"
             })
-            if is_verbose:
-                await websocket.send_text(status_message)
-            logger.info(f"Sent iteration status: {status_message}")
+
+            # status_message = json.dumps({
+            #     "type": "iteration_status",
+            #     "current_iteration": research_iteration,
+            #     "max_iterations": request.max_iterations or 5,
+            #     "status": "in_progress"
+            # })
+            # if is_verbose:
+            #     await websocket.send_text(status_message)
+            # logger.info(f"Sent iteration status: {status_message}")
 
         # Process the response based on the provider
         try:
@@ -638,11 +689,16 @@ async def handle_websocket_chat(websocket: WebSocket):
 
                 # Send the actual prompt to client for logging
                 if is_verbose:
-                    await websocket.send_text(json.dumps({
+                    await send_blob(websocket, {
                         "type": "llm_prompt",
                         "content": prompt,
                         "length": len(prompt),
-                    }))
+                    })
+                    # await websocket.send_text(json.dumps({
+                    #     "type": "llm_prompt",
+                    #     "content": prompt,
+                    #     "length": len(prompt),
+                    # }))
 
                 # Get the response and handle it properly using the previously created api_kwargs
                 response = await model.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
@@ -673,18 +729,26 @@ async def handle_websocket_chat(websocket: WebSocket):
                     f"[DEBUG] Ollama streaming complete for iteration: {research_iteration}, is_deep_research:{is_deep_research} ")
 
                 # Send completion status for deep research
-                if is_deep_research:
-                    completion_message = json.dumps({
+                if is_deep_research and is_verbose:
+                    await send_blob(websocket, {
                         "type": "iteration_status",
                         "current_iteration": research_iteration,
                         "max_iterations": request.max_iterations or 5,
                         "status": "complete"
                     })
-                    if is_verbose:
-                        await websocket.send_text(completion_message)
-                    logger.info(
-                        f"Sent iteration completion: {completion_message}")
+                    # completion_message = json.dumps({
+                    #     "type": "iteration_status",
+                    #     "current_iteration": research_iteration,
+                    #     "max_iterations": request.max_iterations or 5,
+                    #     "status": "complete"
+                    # })
+                    # if is_verbose:
+                    #     await websocket.send_text(completion_message)
+                    # logger.info(
+                    #     f"Sent iteration completion: {completion_message}")
 
+                # logger.debug(
+                #     f"Ollama streaming response complete {full_response}...")
                 # Explicitly close the WebSocket connection after the response is complete
                 await websocket.close()
 

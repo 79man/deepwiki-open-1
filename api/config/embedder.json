@@ -2,7 +2,8 @@
   "embedder": {
     "client_class": "OllamaClient",
     "model_kwargs": {
-      "model": "nomic-embed-text"
+      "model": "nomic-embed-text",
+      "num_ctx": 2048 
     }
   },
   "retriever": {
