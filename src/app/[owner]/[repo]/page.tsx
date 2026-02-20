@@ -20,7 +20,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-
+import { LuMaximize2, LuMinimize2 } from "react-icons/lu";
 import {
   FaBitbucket,
   FaBookOpen,
@@ -441,9 +441,34 @@ export default function RepoWikiPage() {
 
   // State for Ask modal
   const [isAskModalOpen, setIsAskModalOpen] = useState(false);
+  
+  // Track whether the Ask panel (card) is currently fullscreen
+  const [isAskFullscreen, setIsAskFullscreen] = useState(false);
+
+  // Ref for the card you want to put into fullscreen
+  const askCardRef = useRef<HTMLDivElement | null>(null);
+
   const askComponentRef = useRef<{ clearConversation: () => void } | null>(
     null
   );
+
+  const toggleAskFullscreen = async () => {
+  if (typeof document === "undefined") return; // SSR guard
+
+  try {
+    const el = askCardRef.current;
+
+    // If nothing is in fullscreen and we have our card, enter fullscreen
+    if (!document.fullscreenElement && el) {
+      await el.requestFullscreen();
+    } else if (document.exitFullscreen) {
+      // Otherwise, exit fullscreen
+      await document.exitFullscreen();
+    }
+  } catch (err) {
+    console.error("Fullscreen error:", err);
+  }
+  };
 
   // Authentication state
   const [authRequired, setAuthRequired] = useState<boolean>(false);
@@ -624,6 +649,21 @@ export default function RepoWikiPage() {
     }
     return () => clearInterval(interval);
   }, [pageStartTime, currentGeneratingPageId]);
+
+  useEffect(() => {
+  if (typeof document === "undefined") return;
+
+  const onFsChange = () => {
+    const isNowFull =
+      !!document.fullscreenElement &&
+      document.fullscreenElement === askCardRef.current;
+
+    setIsAskFullscreen(isNowFull);
+  };
+
+  document.addEventListener("fullscreenchange", onFsChange);
+  return () => document.removeEventListener("fullscreenchange", onFsChange);
+}, []);
 
   function isValidReadmeAnalysis(obj: any): obj is ReadmeAnalysis {
     return (
@@ -4979,8 +5019,28 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
           isAskModalOpen ? "opacity-100" : "opacity-0 pointer-events-none"
         }`}
       >
-        <div className="bg-[var(--card-bg)] rounded-lg shadow-xl w-full max-w-3xl max-h-[80vh] flex flex-col">
-          <div className="flex items-center justify-end p-3 absolute top-0 right-0 z-10">
+        
+        <div
+            ref={askCardRef}
+            className="bg-[var(--card-bg)] rounded-lg shadow-xl w-full max-w-3xl max-h-[80vh] flex flex-col relative"
+          >
+      {/* Top-right controls */}
+      <div className="flex items-center gap-2 p-3 absolute top-0 right-0 z-10">
+      {/* Fullscreen toggle */}
+      <button
+        onClick={toggleAskFullscreen}
+        title={isAskFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+        className="text-[var(--muted)] hover:text-[var(--foreground)] transition-colors bg-[var(--card-bg)]/80 rounded-full p-2"
+        aria-label={isAskFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+      >
+        {isAskFullscreen ? (
+          <LuMinimize2 className="text-xl" />
+        ) : (
+          <LuMaximize2 className="text-xl" />
+        )}
+      </button>
+
+      {/* Close modal */}
             <button
               onClick={() => {
                 // Just close the modal without clearing the conversation
