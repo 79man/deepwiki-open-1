@@ -3,6 +3,12 @@
 
 import React, { createContext, useContext, useState, ReactNode } from "react";
 
+export interface RetrievedDoc {
+  file_path: string;
+  score: number| null;
+  text: string;
+}
+
 export type PromptLogEntry = {
   prompt: string;
   response: string;
@@ -10,6 +16,11 @@ export type PromptLogEntry = {
   timestamp: number;
   model?: string;      // Model name/ID
   timeTaken?: number;  // in seconds or ms
+    retrieval?: {
+      rag_query: string;
+      docs: RetrievedDoc[];
+       // optional: the fully formatted context text block
+    };
 };
 
 type PromptLogContextType = {
@@ -28,6 +39,12 @@ export const PromptLogProvider: React.FC<{ children: ReactNode }> = ({
 
   const addPromptLog = (entry: PromptLogEntry) => {
     setPromptLog((log) => [...log, entry]);
+  //       console.log(
+  //               `entry  : ${entry}`
+  //             );
+  //   console.log(
+  //               `retrieval docs : ${entry.retrieval?.docs?.length}`
+  //             );
   };
 
   return (

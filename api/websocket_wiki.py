@@ -345,6 +345,7 @@ async def handle_websocket_chat(websocket: WebSocket):
         context_text = ""
         retrieved_documents = None
         retrieved_documents_count = 0
+        retrieved_docs_list = []
 
         logger.info(f"input_too_large: {input_too_large}")
         rag_query = query
@@ -389,6 +390,13 @@ async def handle_websocket_chat(websocket: WebSocket):
                             score = doc_scores[idx] if idx < len(
                                 doc_scores) else None
                             docs_by_file[file_path].append((doc, score))
+                        for file_path, doc_score_pairs in docs_by_file.items():
+                            for doc, score in doc_score_pairs:
+                                retrieved_docs_list.append({
+                                    "file_path": file_path,
+                                    "score": round(score, 3) if score is not None else None,
+                                    "text": doc.text
+                                })
 
                         # Format context text with file path grouping and scores
                         context_parts = []
@@ -426,7 +434,7 @@ async def handle_websocket_chat(websocket: WebSocket):
                 "type": "rag_details",
                 "query": rag_query,
                 "retrieved": retrieved_documents_count,
-                "results": context_text
+                "results": retrieved_docs_list
             })
             # await websocket.send_text(json.dumps({
             #     "type": "rag_details",

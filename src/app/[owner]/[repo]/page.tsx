@@ -497,6 +497,9 @@ export default function RepoWikiPage() {
   const researchCompleteRef = useRef(researchComplete);
   let latestIterationRef = useRef(0);
   const generatedPagesRef = useRef(generatedPages);
+  const ragQueryRef = useRef<string>("");
+  const ragDocsRef = useRef<{ file_path: string; score: number | null; text: string }[]>([]);
+
 
   function showPromptEditModal(
     prompt: string,
@@ -945,6 +948,23 @@ Return ONLY valid JSON, no markdown formatting.`;
                     }
                   }
                   // process other control messages if needed
+                  if (controlData.type === "rag_details") {           
+                  const docs = Array.isArray(controlData.results)
+                    ? controlData.results
+                    : (typeof controlData.results === "string"
+                        ? (() => { try { const r = JSON.parse(controlData.results); return Array.isArray(r) ? r : []; } catch { return []; } })()
+                        : []);
+                  // console.log("retrieved docs before:", ragDocsRef.current);
+                  // console.log("Array.isArray(controlData.results):", Array.isArray(controlData.results));
+                  // console.log("docs length:", docs.length);
+                  // console.log("first doc:", docs[0]);
+                  // Update refs (use setState if you want a re-render)
+                  ragQueryRef.current = typeof controlData.query === "string" ? controlData.query : "";
+                  ragDocsRef.current = docs;
+                 
+                  return;
+
+                }
                 });
                 return; // Skip further processing for Control messages
               }
@@ -973,6 +993,10 @@ Return ONLY valid JSON, no markdown formatting.`;
               : selectedModelState
           }`,
           timeTaken: (Date.now() - requestStartTime) / 1000,
+          retrieval: {
+                rag_query: ragQueryRef.current,
+                docs: ragDocsRef.current,
+              },
         });
 
         const jsonMatch = responseText.match(/\{[\s\S]*\}/);
@@ -1826,6 +1850,10 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
                 finalIsCustomModel ? finalCustomModel : finalModel
               }`,
               timeTaken,
+              retrieval: {
+                rag_query: ragQueryRef.current,
+                docs: ragDocsRef.current,
+              },
             });
 
             // Get existing iterations or initialize empty array
@@ -2160,13 +2188,25 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
                   //   `Research iteration ${latestIteration} in progress...`
                   // );
                 } else if (controlData.type === "rag_details") {
-                  let retrieved_docs = controlData.results;
-                  let query = controlData.query;
+                  // let retrieved_docs = controlData.results;
+                  // let query = controlData.query;
 
-                  setRetrievedDocs((prev) => [
-                    ...prev,
-                    { rag_query: query, docs: retrieved_docs },
-                  ]);
+                  // setRetrievedDocs((prev) => [
+                  //   ...prev,
+                  //   { rag_query: query, docs: retrieved_docs },
+                  // ]);
+                  const docs = Array.isArray(controlData.results)
+                    ? controlData.results
+                    : (typeof controlData.results === "string"
+                        ? (() => { try { const r = JSON.parse(controlData.results); return Array.isArray(r) ? r : []; } catch { return []; } })()
+                        : []);
+                  // console.log("retrieved docs before:", ragDocsRef.current);
+                  // console.log("Array.isArray(data.results):", Array.isArray(controlData.results));
+                  // console.log("docs length:", docs.length);
+                  // console.log("first doc:", docs[0]);
+
+                  ragQueryRef.current = typeof controlData.query === "string" ? controlData.query : "";
+                  ragDocsRef.current = docs;
                 }
               });
               return;
@@ -2276,7 +2316,12 @@ Remember, do not provide any acknowledgements, disclaimers, apologies, or any ot
                 finalIsCustomModel ? finalCustomModel : finalModel
               }`,
               timeTaken: (Date.now() - requestStartTime) / 1000,
+              retrieval: {
+                rag_query: ragQueryRef.current,
+                docs: ragDocsRef.current,
+              },
             });
+            
 
             cleanupPageState(page.id);
             resolve();

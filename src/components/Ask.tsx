@@ -87,6 +87,9 @@ const Ask: React.FC<AskProps> = ({
   const modelRef = useRef(model);
   const { addPromptLog } = usePromptLog();
 
+  const ragQueryRef = useRef<string>("");
+  const ragDocsRef = useRef<{ file_path: string; score: number | null; text: string }[]>([]);
+
   // Focus input on component mount
   useEffect(() => {
     if (inputRef.current) {
@@ -396,6 +399,24 @@ const Ask: React.FC<AskProps> = ({
                 const latestIteration = controlData.current_iteration || 0;
                 console.log(`latestIteration: ${latestIteration}`);
               }
+              if (controlData.type === "rag_details") {           
+
+              const docs = Array.isArray(controlData.results)
+                ? controlData.results
+                : (typeof controlData.results === "string"
+                    ? (() => { try { const r = JSON.parse(controlData.results); return Array.isArray(r) ? r : []; } catch { return []; } })()
+                    : []);
+
+              // console.log("retrieved docs before:", ragDocsRef.current);
+              // console.log("Array.isArray(data.results):", Array.isArray(controlData.results));
+              // console.log("docs length:", docs.length);
+              // console.log("first doc:", docs[0]);
+
+              // Update refs (use setState if you want a re-render)
+              ragQueryRef.current = typeof controlData.query === "string" ? controlData.query : "";
+              ragDocsRef.current = docs;
+              return;
+              }
             });
             return;
           }
@@ -465,6 +486,10 @@ const Ask: React.FC<AskProps> = ({
                 isCustomSelectedModel ? customSelectedModel : selectedModel
               }`,
               timeTaken: (Date.now() - requestStartTime) / 1000,
+              retrieval: {
+                rag_query: ragQueryRef.current,
+                docs: ragDocsRef.current,
+              },
             });
             setResearchComplete(true);
           } else {
@@ -481,9 +506,11 @@ const Ask: React.FC<AskProps> = ({
               isCustomSelectedModel ? customSelectedModel : selectedModel
             }`,
             timeTaken: (Date.now() - requestStartTime) / 1000,
-
+            retrieval: {
+                rag_query: ragQueryRef.current,
+                docs: ragDocsRef.current,
+              },
           });
-
           setIsLoading(false);
         }
       );
@@ -728,6 +755,20 @@ const Ask: React.FC<AskProps> = ({
                   `RCV: iteration: ${controlData.current_iteration}, status: ${controlData.status}`
                 );
               }
+              if (controlData.type === "rag_details") {            
+              // data.results should be an array if server sent correctly
+              const docs = Array.isArray(controlData.results)
+                ? controlData.results
+                : (typeof controlData.results === "string"
+                    ? (() => { try { const r = JSON.parse(controlData.results); return Array.isArray(r) ? r : []; } catch { return []; } })()
+                    : []);
+              console.log("docs length:", docs.length);
+              // console.log("first doc:", docs[0]);
+              ragQueryRef.current = typeof controlData.query === "string" ? controlData.query : "";
+              ragDocsRef.current = docs;
+              return;
+
+            }
             });
             return;
           }
@@ -780,7 +821,13 @@ const Ask: React.FC<AskProps> = ({
               isCustomSelectedModel ? customSelectedModel : selectedModel
             }`,
             timeTaken: (Date.now() - requestStartTime) / 1000,
+            retrieval: {
+                rag_query: ragQueryRef.current,
+                docs: ragDocsRef.current,
+              },
           });
+          //  console.log(`retrieved docs after:  ${ragDocsRef.current}`)
+          //   console.log("Ask.tsx: [close] logging entry docs:", ragDocsRef.current.length);
 
           setIsLoading(false);
         }

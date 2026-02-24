@@ -60,7 +60,7 @@ const PromptLogFloatingPanel: React.FC = () => {
   const MAX_PREVIEW_LENGTH = 500;
 
   const formatLogEntryClipboard = (entry: PromptLogEntry) => {
-    return [
+  const lines = [
       `### Prompt Log Entry`,
       `* **Timestamp:** ${new Date(entry.timestamp).toLocaleString()}`,
       entry.source ? `* **Source:** ${entry.source}` : "",
@@ -81,7 +81,19 @@ const PromptLogFloatingPanel: React.FC = () => {
         : "```\n" + entry.response + "\n```",
     ]
       .filter(Boolean)
-      .join("\n");
+      // Append retrieved docs if present
+  if (entry.retrieval?.docs?.length) {
+    
+    lines.push("", "**Retrieved Docs:**");
+    if (entry.retrieval.rag_query) {
+      lines.push(`* Query: ${entry.retrieval.rag_query}`);
+    }
+    entry.retrieval.docs.forEach((doc) => {
+      lines.push(`- **${doc.file_path}** (Score: ${doc.score})`);
+      if (doc.text) lines.push(doc.text);
+    });
+  }
+  return lines.join("\n");
   };
 
   const handleCopyEntry = (entry: PromptLogEntry) => {
@@ -687,6 +699,97 @@ const PromptLogFloatingPanel: React.FC = () => {
                       </>
                     );
                   })()}
+                                    
+                {/* Retrieved Docs Section */}
+                
+{entry.retrieval && entry.retrieval.docs && entry.retrieval.docs.length > 0 && (
+  <>
+    {/* Header line with collapse/expand button */}
+    <div className="flex items-center justify-between mb-1 mt-3">
+      <div className="font-bold text-sm text-[var(--accent-primary)]">
+        
+        Retrieved Documents
+        {entry.retrieval.rag_query ? `— Query: ${entry.retrieval.rag_query}` : ''} 
+        {entry.retrieval.docs.length ? ` — Retrieved Docs Count: ${entry.retrieval.docs.length}` : ''}
+
+      </div>
+
+      {/* Collapse/Expand control */}
+      <button
+        type="button"
+        onClick={() => {
+          setExpandedContent(prev => ({
+            ...prev,
+            [i]: {
+              ...prev[i],
+              retrievalCollapsed: !prev[i]?.retrievalCollapsed,
+            },
+          }));
+        }}
+        className="text-xs px-2 py-1 rounded border hover:bg-[var(--background-muted)]"
+        aria-expanded={!(expandedContent[i]?.retrievalCollapsed)}
+        aria-controls={`retrieved-docs-${i}`}
+      >
+        {expandedContent[i]?.retrievalCollapsed ? "▶" : "▼"}
+        
+      </button>
+      
+      
+
+    </div>
+
+    {/* Per-doc listing, hidden when collapsed */}
+    {!expandedContent[i]?.retrievalCollapsed && (
+      <div id={`retrieved-docs-${i}`} className="space-y-2">
+        {entry.retrieval.docs.map((doc: { text?: string; file_path?: string; score?: number }, dIdx: number) => {
+          const MAX_PREVIEW_LENGTH = 500;
+          const isExpanded = expandedContent[i]?.[`retrieved_${dIdx}` as any] as boolean;
+          const shouldTruncate = !!doc.text && doc.text.length > MAX_PREVIEW_LENGTH;
+          const displayContent =
+            !shouldTruncate || isExpanded
+              ? doc.text
+              : (doc.text ?? '').substring(0, MAX_PREVIEW_LENGTH) + '...';
+
+          const toggleRetrievedExpansion = () => {
+            setExpandedContent(prev => ({
+              ...prev,
+              [i]: {
+                ...prev[i],
+                [`retrieved_${dIdx}`]: !prev[i]?.[`retrieved_${dIdx}`],
+              },
+            }));
+          };
+
+          return (
+            <div key={dIdx} className="rounded border bg-[var(--background)] p-2">
+              {/* Doc header row */}
+              <div className="flex items-center justify-between">
+                <div className="min-w-0 flex-1 text-xs font-semibold text-blue-600 line-clamp-2 break-words">
+                  {doc.file_path}{' '}
+                  <span className="text-gray-500">(Relevance: {doc.score})</span>
+                </div>
+              </div>
+
+              {/* Doc text preview */}
+              <pre className="bg-[var(--background)] rounded p-2 text-xs whitespace-pre-wrap break-words overflow-x-hidden">
+                {displayContent}
+              </pre>
+
+              {shouldTruncate && (
+                <button
+                  onClick={toggleRetrievedExpansion}
+                  className="text-xs text-[var(--accent-primary)] hover:underline mt-1"
+                >
+                  {isExpanded ? 'Show Less' : 'Show More'}
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    )}
+  </>
+)}
                 </>
               )}
             </div>
