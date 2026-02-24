@@ -401,20 +401,6 @@ const Ask: React.FC<AskProps> = ({
           }
           fullResponse += message;
           setResponse(fullResponse);
-
-          addPromptLog({
-            source: "GenericChat",
-            prompt: requestBody.messages
-              .map((m) => `${m.role}: ${m.content}`)
-              .join("\n\n"),
-            response: fullResponse,
-            timestamp: Date.now(),
-            model: `${selectedProvider}/${
-              isCustomSelectedModel ? customSelectedModel : selectedModel
-            }`,
-            timeTaken: (Date.now() - requestStartTime) / 1000,
-          });
-
           // Extract research stage if this is a deep research response
           if (deepResearch) {
             const stage = extractResearchStage(fullResponse, newIteration);
@@ -484,6 +470,19 @@ const Ask: React.FC<AskProps> = ({
           } else {
             setResearchComplete(isComplete);
           }
+          addPromptLog({
+            source: "GenericChat",
+            prompt: requestBody.messages
+              .map((m) => `${m.role}: ${m.content}`)
+              .join("\n\n"),
+            response: fullResponse,
+            timestamp: Date.now(),
+            model: `${selectedProvider}/${
+              isCustomSelectedModel ? customSelectedModel : selectedModel
+            }`,
+            timeTaken: (Date.now() - requestStartTime) / 1000,
+
+          });
 
           setIsLoading(false);
         }
